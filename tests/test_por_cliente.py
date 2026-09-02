@@ -1,0 +1,192 @@
+"""Pruebas de resaltar_por_cedula_y_exportar_por_cliente (datos inventados, ver conftest.py)."""
+from pathlib import Path
+
+import pymupdf as fitz
+
+from resaltado_pdf import _techo_de_datos, resaltar_por_cedula_y_exportar_por_cliente
+
+
+def _escribir_fila(pagina, y, celdas, fontsize=10):
+    """Escribe una fila de texto en columnas separadas horizontalmente,
+    imitando cómo una planilla real reparte el texto en columnas anchas."""
+    x = 36
+    for texto, ancho in celdas:
+        pagina.insert_text((x, y), texto, fontsize=fontsize)
+        x += ancho
+
+
+_TITULOS_COLUMNAS = [
+    ("IDENTIFICACION", 90), ("NOMBRE", 80), ("APELLIDOS", 100), ("OBSERVACION", 90),
+]
+
+
+def _crear_pdf_planilla(ruta, empresa, filas_por_pagina, espacio_filas=30):
+    """Arma una planilla con una página por cada lista de filas de
+    'filas_por_pagina', repitiendo encabezado (empresa + títulos de
+    columna) en cada página -como pasa en una planilla real de varias
+    hojas para la misma póliza."""
+    documento = fitz.open()
+    for filas in filas_por_pagina:
+        pagina = documento.new_page(width=595, height=842)
+        pagina.insert_text((36, 40), empresa, fontsize=13)
+        _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
+        y = 140
+        for cedula, nombre, apellidos, obs in filas:
+            _escribir_fila(pagina, y, [(cedula, 90), (nombre, 80), (apellidos, 100), (obs, 90)])
+            y += espacio_filas
+    documento.save(str(ruta))
+    documento.close()
+
+
+def test_exporta_un_pdf_por_cliente(ruta_pdf_ejemplo, registros_ejemplo, tmp_path):
+    carpeta_salida = tmp_path / "salida_por_cliente"
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [ruta_pdf_ejemplo], registros_ejemplo, str(carpeta_salida), formato="mnk"
+    )
+
+    assert set(resultado["archivos_por_cliente"]) == {"Cliente Prueba Uno", "Cliente Prueba Dos"}
+    for ruta in resultado["archivos_por_cliente"].values():
+        assert Path(ruta).exists()
+
+
+def test_reporta_cedulas_que_no_aparecen_en_el_pdf(ruta_pdf_ejemplo, registros_ejemplo, tmp_path):
+    carpeta_salida = tmp_path / "salida_por_cliente"
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [ruta_pdf_ejemplo], registros_ejemplo, str(carpeta_salida), formato="mnk"
+    )
+
+    cedulas_no_encontradas = {r["cedula"] for r in resultado["no_encontrados"]}
+    assert cedulas_no_encontradas == {"999999999"}
+
+
+def test_no_reporta_errores_con_un_pdf_valido(ruta_pdf_ejemplo, registros_ejemplo, tmp_path):
+    carpeta_salida = tmp_path / "salida_por_cliente"
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [ruta_pdf_ejemplo], registros_ejemplo, str(carpeta_salida), formato="mnk"
+    )
+
+    assert resultado["errores_por_archivo"] == {}
+
+
+def test_pdf_con_contrasena_se_reporta_como_error_sin_tumbar_el_proceso(tmp_path):
+    documento = fitz.open()
+    documento.new_page()
+    ruta = tmp_path / "protegido.pdf"
+    documento.save(str(ruta), encryption=fitz.PDF_ENCRYPT_AES_256, user_pw="clave123")
+    documento.close()
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [str(ruta)],
+        [{"cedula": "111111111", "cliente": "Cliente X"}],
+        str(tmp_path / "salida"),
+    )
+
+    assert "protegido.pdf" in resultado["errores_por_archivo"]
+    assert resultado["archivos_por_cliente"] == {}
+
+
+def test_techo_de_datos_queda_entre_el_encabezado_y_la_primera_fila(ruta_pdf_ejemplo):
+    # Deben coincidir con Y_TITULOS y Y_PRIMERA_FILA en conftest.py.
+    y_titulos = 100
+    y_primera_fila = 140
+
+    documento = fitz.open(ruta_pdf_ejemplo)
+    pagina = documento[0]
+
+    techo = _techo_de_datos(pagina, formato="mnk")
+
+    assert techo is not None
+    assert y_titulos < techo < y_primera_fila
+    documento.close()
+
+
+def test_encabezado_una_sola_vez_si_la_poliza_cabe_en_una_hoja(tmp_path):
+    """Un mismo oficial partido en 3 páginas del mismo PDF (misma póliza)
+    solo debe arrastrar el encabezado una vez, si las filas caben en una
+    sola hoja de salida."""
+    ruta_poliza = tmp_path / "poliza_a.pdf"
+    _crear_pdf_planilla(
+        ruta_poliza,
+        "EMPRESA POLIZA A",
+        filas_por_pagina=[
+            [("111111111", "JUAN", "PEREZ MORA", "Ninguna")],
+            [("222222222", "MARIA", "SOLANO MORA", "Ninguna")],
+            [("333333333", "LUIS", "ZUNIGA RAMIREZ", "Ninguna")],
+        ],
+    )
+    registros = [
+        {"cedula": "111111111", "cliente": "Cliente Unico", "nombre": "Juan Perez"},
+        {"cedula": "222222222", "cliente": "Cliente Unico", "nombre": "Maria Solano"},
+        {"cedula": "333333333", "cliente": "Cliente Unico", "nombre": "Luis Zuniga"},
+    ]
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [str(ruta_poliza)], registros, str(tmp_path / "salida"), formato="mnk"
+    )
+
+    documento = fitz.open(resultado["archivos_por_cliente"]["Cliente Unico"])
+    try:
+        assert documento.page_count == 1
+        assert documento[0].get_text().count("EMPRESA POLIZA A") == 1
+    finally:
+        documento.close()
+
+
+def test_polizas_distintas_conservan_su_propio_encabezado(tmp_path):
+    """Si el mismo cliente tiene oficiales en dos pólizas (archivos)
+    distintas, cada una debe llegar en su propia hoja con su propio
+    encabezado -sin mezclarse con el de la otra póliza."""
+    ruta_poliza_a = tmp_path / "poliza_a.pdf"
+    ruta_poliza_b = tmp_path / "poliza_b.pdf"
+    _crear_pdf_planilla(ruta_poliza_a, "EMPRESA POLIZA A", [[("111111111", "JUAN", "PEREZ MORA", "Ninguna")]])
+    _crear_pdf_planilla(ruta_poliza_b, "EMPRESA POLIZA B", [[("111111111", "JUAN", "PEREZ MORA", "Ninguna")]])
+
+    registros = [{"cedula": "111111111", "cliente": "Cliente Multi Poliza", "nombre": "Juan Perez"}]
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [str(ruta_poliza_a), str(ruta_poliza_b)], registros, str(tmp_path / "salida"), formato="mnk"
+    )
+
+    documento = fitz.open(resultado["archivos_por_cliente"]["Cliente Multi Poliza"])
+    try:
+        assert documento.page_count == 2
+        texto_pagina_1 = documento[0].get_text()
+        texto_pagina_2 = documento[1].get_text()
+        assert "EMPRESA POLIZA A" in texto_pagina_1 and "EMPRESA POLIZA B" not in texto_pagina_1
+        assert "EMPRESA POLIZA B" in texto_pagina_2 and "EMPRESA POLIZA A" not in texto_pagina_2
+    finally:
+        documento.close()
+
+
+def test_encabezado_se_repite_si_la_poliza_desborda_una_hoja(tmp_path):
+    """Si una misma póliza trae tantos oficiales que no caben en una sola
+    hoja de salida, la segunda hoja también debe traer el encabezado
+    arriba (si no, se pierde de vista qué póliza es)."""
+    cantidad_filas = 60
+    filas = [
+        (f"{100000000 + i}", "NOMBRE", f"APELLIDO {i}", "Ninguna")
+        for i in range(cantidad_filas)
+    ]
+    ruta_poliza = tmp_path / "poliza_larga.pdf"
+    _crear_pdf_planilla(ruta_poliza, "EMPRESA POLIZA LARGA", [filas], espacio_filas=10)
+
+    registros = [
+        {"cedula": f"{100000000 + i}", "cliente": "Cliente Lote Grande", "nombre": f"Nombre {i}"}
+        for i in range(cantidad_filas)
+    ]
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [str(ruta_poliza)], registros, str(tmp_path / "salida"), formato="mnk"
+    )
+
+    documento = fitz.open(resultado["archivos_por_cliente"]["Cliente Lote Grande"])
+    try:
+        assert documento.page_count > 1
+        for pagina_salida in documento:
+            assert "EMPRESA POLIZA LARGA" in pagina_salida.get_text()
+    finally:
+        documento.close()
+

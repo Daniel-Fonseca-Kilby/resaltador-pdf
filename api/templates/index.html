@@ -1,0 +1,1054 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VMA Seguridad · Resaltador de Planillas</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2L4 5V11C4 16.5 7.4 20.7 12 22C16.6 20.7 20 16.5 20 11V5L12 2Z' fill='%23c9a34e'/%3E%3Cpath d='M9.5 12.2L11.3 14L14.8 10' stroke='%230a1f3d' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --azul-oscuro: #0a1f3d;
+    --azul: #123a6b;
+    --azul-claro: #1c4d8f;
+    --azul-claro-fondo: #eef4fd;
+    --dorado: #c9a34e;
+    --dorado-fondo: #fbf3e2;
+    --fondo: #f4f5f7;
+    --panel: #ffffff;
+    --texto: #23272f;
+    --texto-suave: #5a6472;
+    --texto-tenue: #8890a0;
+    --borde: #d7dbe3;
+    --verde: #1e8e5a;
+    --verde-fondo: #e8f6ef;
+    --rojo: #c0392b;
+    --rojo-fondo: #fbeceb;
+    --radio: 6px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    margin: 0;
+    background: var(--fondo);
+    color: var(--texto);
+  }
+
+  .icono { width: 16px; height: 16px; flex-shrink: 0; }
+  .icono-envoltura { display: inline-flex; flex-shrink: 0; }
+
+  header {
+    background: var(--azul-oscuro);
+    color: #fff;
+    border-bottom: 2px solid var(--dorado);
+  }
+
+  .header-interior {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  header svg.logo { flex-shrink: 0; }
+
+  .header-texto h1 {
+    font-size: 16px;
+    font-weight: 700;
+    margin: 0;
+  }
+
+  .header-texto p {
+    margin: 1px 0 0;
+    font-size: 12px;
+    color: #b9c4d6;
+  }
+
+  main {
+    max-width: 720px;
+    margin: 24px auto 48px;
+    padding: 0 20px;
+  }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--borde);
+    border-radius: var(--radio);
+  }
+
+  .campo {
+    padding: 16px 22px;
+    border-bottom: 1px solid var(--borde);
+  }
+
+  .campo:last-child { border-bottom: none; }
+
+  .campo label {
+    display: block;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--texto);
+    margin-bottom: 3px;
+  }
+
+  .campo .hint {
+    margin: 0 0 10px;
+    font-size: 12px;
+    color: var(--texto-suave);
+    line-height: 1.5;
+  }
+
+  input[type="text"] {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--borde);
+    border-radius: 4px;
+    font-size: 13.5px;
+    font-family: inherit;
+    background: #fff;
+    color: var(--texto);
+  }
+
+  select {
+    width: 100%;
+    padding: 8px 32px 8px 10px;
+    border: 1px solid var(--borde);
+    border-radius: 4px;
+    font-size: 13.5px;
+    font-family: inherit;
+    background-color: #fff;
+    color: var(--texto);
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235a6472' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 16px;
+  }
+
+  input[type="text"]:focus,
+  select:focus,
+  .dropzone:focus-visible {
+    outline: none;
+    border-color: var(--azul-claro);
+    box-shadow: 0 0 0 2px rgba(28, 77, 143, 0.18);
+  }
+
+  input[type="file"] { display: none; }
+
+  .dropzone {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 14px 12px;
+    background: #fbfbfc;
+    border: 1px dashed var(--borde);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--texto-suave);
+    text-align: center;
+  }
+
+  .dropzone:hover { border-color: var(--azul-claro); background: var(--azul-claro-fondo); }
+
+  .dropzone.dropzone-activa {
+    border-color: var(--dorado);
+    background: var(--dorado-fondo);
+  }
+
+  .dropzone strong { color: var(--azul); font-weight: 600; }
+
+  .archivo-elegido {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 8px 10px;
+    background: var(--verde-fondo);
+    border: 1px solid #cfe9dc;
+    border-radius: 4px;
+  }
+
+  .archivo-elegido .icono-envoltura { color: var(--verde); }
+
+  .archivo-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  .archivo-nombre {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--texto);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .archivo-tam { font-size: 11.5px; color: var(--texto-suave); flex-shrink: 0; }
+
+  .excel-modo-indicador {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 8px;
+    padding: 7px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .excel-modo-indicador.cargando { background: #f3f5f9; color: var(--texto-tenue); font-weight: 500; }
+  .excel-modo-indicador.cliente { background: var(--azul-claro-fondo); color: var(--azul); }
+  .excel-modo-indicador.simple { background: #f3f5f9; color: var(--texto-suave); }
+  .excel-modo-indicador.error { background: var(--rojo-fondo); color: var(--rojo); }
+
+  .quitar-archivo {
+    flex-shrink: 0;
+    border: none;
+    background: none;
+    color: var(--rojo);
+    cursor: pointer;
+    padding: 3px;
+    border-radius: 4px;
+    display: flex;
+  }
+
+  .quitar-archivo svg { width: 14px; height: 14px; }
+  .quitar-archivo:hover { background: #f6d9d6; }
+
+  .lista-archivos-encabezado {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--texto-suave);
+    font-weight: 600;
+  }
+
+  .quitar-todos {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border: none;
+    background: none;
+    color: var(--rojo);
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 3px 5px;
+    border-radius: 4px;
+  }
+
+  .quitar-todos:hover { background: var(--rojo-fondo); }
+  .quitar-todos svg { width: 12px; height: 12px; }
+
+  ul.lista-archivos {
+    list-style: none;
+    margin: 6px 0 0;
+    padding: 0;
+    max-height: 170px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  ul.lista-archivos li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+
+  ul.lista-archivos li:hover { background: #f3f5f9; }
+  ul.lista-archivos li .icono-envoltura { color: var(--texto-tenue); }
+
+  ul.lista-archivos li .archivo-detalle {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  ul.lista-archivos li .archivo-detalle span:first-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--texto);
+  }
+
+  ul.lista-archivos li .archivo-detalle .archivo-tam { flex-shrink: 0; }
+
+  .campo-acciones { padding: 16px 22px; }
+
+  button#btnProcesar {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: var(--azul);
+    color: #fff;
+    border: none;
+    padding: 10px 16px;
+    font-size: 13.5px;
+    font-family: inherit;
+    font-weight: 600;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  button#btnProcesar:hover:not(:disabled) { background: var(--azul-claro); }
+
+  button#btnProcesar:disabled {
+    background: #c7ccd4;
+    color: #7a828d;
+    cursor: default;
+  }
+
+  .barra-progreso {
+    display: none;
+    margin-top: 10px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--borde);
+    overflow: hidden;
+  }
+
+  .barra-progreso.activa { display: block; }
+
+  .barra-progreso-relleno {
+    width: 35%;
+    height: 100%;
+    background: var(--azul-claro);
+    animation: progreso-indeterminado 1.1s ease-in-out infinite;
+  }
+
+  @keyframes progreso-indeterminado {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(285%); }
+  }
+
+  .resultado {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 12px;
+  }
+
+  .resultado:empty { display: none; margin-top: 0; }
+
+  .resultado-mensaje,
+  .resultado-resumen {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .resultado-mensaje.advertencia, .resultado-resumen.advertencia {
+    background: var(--dorado-fondo);
+    color: #8a6414;
+  }
+
+  .resultado-mensaje.error, .resultado-resumen.error {
+    background: var(--rojo-fondo);
+    color: var(--rojo);
+  }
+
+  .resultado-mensaje.exito, .resultado-resumen.exito {
+    background: var(--verde-fondo);
+    color: var(--verde);
+  }
+
+  .resultado-seccion-titulo {
+    font-size: 11.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--texto-suave);
+    margin: 8px 0 -2px;
+  }
+
+  .item-resultado {
+    border: 1px solid var(--borde);
+    border-left: 3px solid var(--borde);
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-size: 12.5px;
+  }
+
+  .item-resultado.ok { border-left-color: var(--verde); }
+  .item-resultado.error { border-left-color: var(--rojo); background: var(--rojo-fondo); }
+  .item-resultado.advertencia { border-left-color: var(--dorado); background: var(--dorado-fondo); color: #8a6414; }
+
+  .item-resultado-cabecera {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    color: var(--texto);
+    overflow-wrap: anywhere;
+  }
+
+  .item-resultado.error .item-resultado-cabecera { color: var(--rojo); }
+  .item-resultado.ok .icono-envoltura { color: var(--verde); }
+  .item-resultado.error .icono-envoltura { color: var(--rojo); }
+  .item-resultado.compacto { padding: 7px 12px; }
+
+  .item-resultado-detalle {
+    margin: 5px 0 0 24px;
+    color: var(--texto-suave);
+    font-size: 12px;
+  }
+
+  ul.sublista-resultado {
+    list-style: none;
+    margin: 6px 0 0 24px;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  ul.sublista-resultado li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--texto-suave);
+  }
+
+  ul.sublista-resultado li.ok .icono-envoltura { color: var(--verde); }
+  ul.sublista-resultado li.advertencia .icono-envoltura { color: #b8860b; }
+
+  .detalle-no-encontrados {
+    border: 1px solid var(--borde);
+    border-left: 3px solid var(--dorado);
+    border-radius: 4px;
+    padding: 8px 12px;
+    font-size: 12.5px;
+  }
+
+  .detalle-no-encontrados summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--texto);
+  }
+
+  .detalle-no-encontrados[open] summary { margin-bottom: 6px; }
+  .detalle-no-encontrados ul.sublista-resultado { margin-left: 0; }
+
+  #descarga {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 12px;
+    width: 100%;
+    background: var(--verde);
+    color: #fff;
+    padding: 9px 16px;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 13px;
+    text-decoration: none;
+    box-sizing: border-box;
+  }
+
+  #descarga:hover { background: #176b45; }
+
+  footer {
+    text-align: center;
+    padding: 20px 16px 32px;
+    color: var(--texto-tenue);
+    font-size: 11.5px;
+  }
+
+  @media (max-width: 420px) {
+    .campo, .campo-acciones { padding: 14px 16px; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <div class="header-interior">
+      <svg class="logo" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2L4 5V11C4 16.5 7.4 20.7 12 22C16.6 20.7 20 16.5 20 11V5L12 2Z"
+              fill="#c9a34e" stroke="#fff" stroke-width="0.6"/>
+        <path d="M9.5 12.2L11.3 14L14.8 10" stroke="#0a1f3d" stroke-width="1.6"
+              stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <div class="header-texto">
+        <h1>VMA Seguridad</h1>
+        <p>Resaltador de Planillas en PDF</p>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="panel">
+      <div class="campo">
+        <label for="nombres">Nombres a resaltar</label>
+        <p class="hint">Sepárelos por coma, suba un Excel con la lista, o ambos a la vez (Ej: Juan Pérez, María López).</p>
+        <input type="text" id="nombres" placeholder="Juan Pérez, María López">
+      </div>
+
+      <div class="campo">
+        <label>Excel con la lista de nombres (opcional)</label>
+        <p class="hint">Lista simple (una columna de nombres), o el formato completo con columnas "Identificación" y "Cliente" — en ese caso se genera un PDF fusionado por cada cliente en vez de resaltar por nombre.</p>
+
+        <div class="dropzone" id="dropzoneExcel" tabindex="0" role="button" aria-label="Elegir archivo Excel">
+          <input type="file" id="excel" accept=".xlsx,.xlsm" hidden>
+          <span><strong>Arrastre el Excel aquí</strong> o haga clic para elegirlo (.xlsx / .xlsm)</span>
+        </div>
+
+        <div class="archivo-elegido" id="excelElegido" hidden>
+          <span class="icono-envoltura">
+            <svg class="icono" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+              <path d="M14 2v6h6"/>
+              <path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>
+            </svg>
+          </span>
+          <span class="archivo-info">
+            <span class="archivo-nombre" id="excelNombre"></span>
+            <span class="archivo-tam" id="excelTam"></span>
+          </span>
+          <button type="button" class="quitar-archivo" id="excelQuitar" title="Quitar archivo" aria-label="Quitar archivo Excel">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+          </button>
+        </div>
+
+        <div class="excel-modo-indicador" id="excelModoIndicador" hidden></div>
+      </div>
+
+      <div class="campo">
+        <label>Archivos PDF</label>
+        <p class="hint">Puede elegir varios archivos a la vez, o arrastrarlos aquí.</p>
+
+        <div class="dropzone" id="dropzonePdfs" tabindex="0" role="button" aria-label="Elegir archivos PDF">
+          <input type="file" id="pdfs" accept="application/pdf" multiple hidden>
+          <span><strong>Arrastre los PDFs aquí</strong> o haga clic para elegirlos</span>
+        </div>
+
+        <div class="lista-archivos-encabezado" id="pdfsEncabezado" hidden>
+          <span id="pdfsResumen"></span>
+          <button type="button" id="pdfsQuitarTodos" class="quitar-todos">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
+            </svg>
+            Quitar todos
+          </button>
+        </div>
+        <ul class="lista-archivos" id="pdfsLista"></ul>
+      </div>
+
+      <div class="campo">
+        <label for="formato">Tipo de planilla</label>
+        <p class="hint">Solo aplica cuando se filtra por Identificación y Cliente: ayuda a ubicar mejor el encabezado de cada página en el PDF fusionado por cliente.</p>
+        <select id="formato">
+          <option value="auto">Automático (otro formato)</option>
+          <option value="ccss">CCSS - Planilla mensual</option>
+          <option value="mnk">MNK Seguros</option>
+          <option value="ins">INS (Riesgos del Trabajo)</option>
+        </select>
+      </div>
+
+      <div class="campo-acciones">
+        <button id="btnProcesar">
+          <span id="btnTexto">Resaltar y generar PDF</span>
+        </button>
+        <div id="barraProgreso" class="barra-progreso"><div class="barra-progreso-relleno"></div></div>
+        <div id="resultado" class="resultado"></div>
+        <a id="descarga" download="pdfs_resaltados.zip">
+          <svg class="icono" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>
+          </svg>
+          <span>Descargar resultado (.zip)</span>
+        </a>
+      </div>
+    </div>
+  </main>
+
+  <footer>Grupo VMA · Sistema interno de planillas</footer>
+
+<script>
+const ICONS = {
+  check: '<svg class="icono" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>',
+  alerta: '<svg class="icono" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
+  error: '<svg class="icono" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6"/><path d="M9 9l6 6"/></svg>',
+  archivo: '<svg class="icono" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>',
+};
+
+function formatoBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function nodoConIcono(iconoSvg, texto, clase) {
+  const div = document.createElement("div");
+  if (clase) div.className = clase;
+  const envoltura = document.createElement("span");
+  envoltura.className = "icono-envoltura";
+  envoltura.innerHTML = iconoSvg; // SVG estático de confianza, no viene del usuario
+  const span = document.createElement("span");
+  span.textContent = texto; // el texto sí puede venir del usuario -> textContent
+  div.appendChild(envoltura);
+  div.appendChild(span);
+  return div;
+}
+
+function tituloSeccion(texto) {
+  const h = document.createElement("h3");
+  h.className = "resultado-seccion-titulo";
+  h.textContent = texto;
+  return h;
+}
+
+const btn = document.getElementById("btnProcesar");
+const btnTexto = document.getElementById("btnTexto");
+const resultado = document.getElementById("resultado");
+const enlaceDescarga = document.getElementById("descarga");
+const barraProgreso = document.getElementById("barraProgreso");
+
+const MAX_BYTES_TOTAL = 60 * 1024 * 1024; // debe coincidir con MAX_CONTENT_LENGTH en api/index.py
+
+function limpiarResultado() {
+  resultado.innerHTML = "";
+}
+
+function mostrarMensaje(iconoSvg, texto, tipo) {
+  limpiarResultado();
+  resultado.appendChild(nodoConIcono(iconoSvg, texto, `resultado-mensaje ${tipo}`));
+}
+
+// --- Nombres + Excel ---------------------------------------------
+const inputNombres = document.getElementById("nombres");
+const inputExcel = document.getElementById("excel");
+const dropzoneExcel = document.getElementById("dropzoneExcel");
+const excelElegido = document.getElementById("excelElegido");
+const excelNombreEl = document.getElementById("excelNombre");
+const excelTamEl = document.getElementById("excelTam");
+const excelQuitarBtn = document.getElementById("excelQuitar");
+const excelModoIndicador = document.getElementById("excelModoIndicador");
+
+// token para descartar la respuesta de una detección vieja si el usuario
+// cambia el Excel antes de que el fetch anterior conteste
+let tokenDeteccionExcel = 0;
+
+function ocultarModoExcel() {
+  excelModoIndicador.hidden = true;
+  excelModoIndicador.className = "excel-modo-indicador";
+  excelModoIndicador.textContent = "";
+}
+
+async function detectarModoExcel(archivo) {
+  const token = ++tokenDeteccionExcel;
+  excelModoIndicador.hidden = false;
+  excelModoIndicador.className = "excel-modo-indicador cargando";
+  excelModoIndicador.textContent = "Analizando el Excel...";
+
+  const datos = new FormData();
+  datos.append("excel", archivo);
+
+  try {
+    const respuesta = await fetch("/api/detectar-modo-excel", { method: "POST", body: datos });
+    const cuerpo = await respuesta.json();
+    if (token !== tokenDeteccionExcel) return; // el usuario ya cambió el archivo
+
+    if (!respuesta.ok) {
+      excelModoIndicador.className = "excel-modo-indicador error";
+      excelModoIndicador.textContent = cuerpo.error || "No se pudo leer el Excel.";
+      console.error("[resaltador] detección de modo del excel falló:", cuerpo.error);
+      return;
+    }
+
+    if (cuerpo.modo === "cliente") {
+      excelModoIndicador.className = "excel-modo-indicador cliente";
+      excelModoIndicador.textContent =
+        `Modo Cliente: Excel con columnas detectadas (${cuerpo.total_registros} fila(s) con Identificación y Cliente)`;
+    } else {
+      excelModoIndicador.className = "excel-modo-indicador simple";
+      excelModoIndicador.textContent = "Modo Lista de Nombres: se usará como lista simple de nombres a resaltar";
+    }
+    console.log(`[resaltador] excel detectado como modo=${cuerpo.modo}`);
+  } catch (error) {
+    if (token !== tokenDeteccionExcel) return;
+    console.error("[resaltador] error de red detectando el modo del excel:", error);
+    excelModoIndicador.className = "excel-modo-indicador error";
+    excelModoIndicador.textContent = "No se pudo verificar el Excel (error de conexión).";
+  }
+}
+
+function renderizarExcel() {
+  if (inputExcel.files.length === 0) {
+    excelElegido.hidden = true;
+    dropzoneExcel.hidden = false;
+    tokenDeteccionExcel++; // invalida cualquier detección en curso
+    ocultarModoExcel();
+  } else {
+    const archivo = inputExcel.files[0];
+    excelNombreEl.textContent = archivo.name;
+    excelTamEl.textContent = formatoBytes(archivo.size);
+    excelElegido.hidden = false;
+    dropzoneExcel.hidden = true;
+
+    if (/\.(xlsx|xlsm)$/i.test(archivo.name)) {
+      detectarModoExcel(archivo);
+    } else {
+      tokenDeteccionExcel++;
+      excelModoIndicador.hidden = false;
+      excelModoIndicador.className = "excel-modo-indicador error";
+      excelModoIndicador.textContent = "El archivo debe ser un Excel (.xlsx o .xlsm).";
+    }
+  }
+}
+
+inputExcel.addEventListener("change", renderizarExcel);
+
+excelQuitarBtn.addEventListener("click", () => {
+  inputExcel.files = new DataTransfer().files;
+  renderizarExcel();
+});
+
+// --- PDFs ----------------------------------------------------------
+// arreglo propio porque input.files no deja quitar uno solo ni acumular
+// de varias tandas (cada vez que se abre el diálogo pisa la selección)
+const inputPdfs = document.getElementById("pdfs");
+const dropzonePdfs = document.getElementById("dropzonePdfs");
+const pdfsEncabezado = document.getElementById("pdfsEncabezado");
+const pdfsResumen = document.getElementById("pdfsResumen");
+let pdfsSeleccionados = [];
+
+function sincronizarInputPdfs() {
+  const transferencia = new DataTransfer();
+  for (const archivo of pdfsSeleccionados) {
+    transferencia.items.add(archivo);
+  }
+  inputPdfs.files = transferencia.files;
+}
+
+function renderizarListaPdfs() {
+  const lista = document.getElementById("pdfsLista");
+  lista.innerHTML = "";
+
+  if (pdfsSeleccionados.length === 0) {
+    pdfsEncabezado.hidden = true;
+    return;
+  }
+
+  pdfsEncabezado.hidden = false;
+  pdfsResumen.textContent = `${pdfsSeleccionados.length} archivo(s) seleccionado(s)`;
+
+  pdfsSeleccionados.forEach((archivo, indice) => {
+    const item = document.createElement("li");
+
+    const envoltura = document.createElement("span");
+    envoltura.className = "icono-envoltura";
+    envoltura.innerHTML = ICONS.archivo;
+    item.appendChild(envoltura);
+
+    const detalle = document.createElement("span");
+    detalle.className = "archivo-detalle";
+    const nombre = document.createElement("span");
+    nombre.textContent = archivo.name;
+    const tam = document.createElement("span");
+    tam.className = "archivo-tam";
+    tam.textContent = formatoBytes(archivo.size);
+    detalle.appendChild(nombre);
+    detalle.appendChild(tam);
+    item.appendChild(detalle);
+
+    const quitar = document.createElement("button");
+    quitar.type = "button";
+    quitar.className = "quitar-archivo";
+    quitar.title = "Quitar este archivo";
+    quitar.setAttribute("aria-label", `Quitar ${archivo.name}`);
+    quitar.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>';
+    quitar.addEventListener("click", () => {
+      pdfsSeleccionados.splice(indice, 1);
+      sincronizarInputPdfs();
+      renderizarListaPdfs();
+    });
+    item.appendChild(quitar);
+
+    lista.appendChild(item);
+  });
+}
+
+function agregarPdfs(archivos) {
+  for (const archivo of archivos) {
+    if (!archivo.name.toLowerCase().endsWith(".pdf")) continue;
+    const yaEstaba = pdfsSeleccionados.some(
+      (a) => a.name === archivo.name && a.size === archivo.size
+    );
+    if (!yaEstaba) {
+      pdfsSeleccionados.push(archivo);
+    }
+  }
+  sincronizarInputPdfs();
+  renderizarListaPdfs();
+}
+
+inputPdfs.addEventListener("change", () => agregarPdfs(inputPdfs.files));
+
+document.getElementById("pdfsQuitarTodos").addEventListener("click", () => {
+  pdfsSeleccionados = [];
+  sincronizarInputPdfs();
+  renderizarListaPdfs();
+});
+
+// --- Zonas de arrastrar y soltar --------------------------------------------
+function configurarDropzone(zona, alSoltar) {
+  zona.addEventListener("click", () => {
+    const input = zona.querySelector("input[type=file]");
+    if (input) input.click();
+  });
+  zona.addEventListener("keydown", (evento) => {
+    if (evento.key === "Enter" || evento.key === " ") {
+      evento.preventDefault();
+      const input = zona.querySelector("input[type=file]");
+      if (input) input.click();
+    }
+  });
+  ["dragenter", "dragover"].forEach((tipo) => {
+    zona.addEventListener(tipo, (evento) => {
+      evento.preventDefault();
+      zona.classList.add("dropzone-activa");
+    });
+  });
+  ["dragleave", "drop"].forEach((tipo) => {
+    zona.addEventListener(tipo, (evento) => {
+      evento.preventDefault();
+      zona.classList.remove("dropzone-activa");
+    });
+  });
+  zona.addEventListener("drop", (evento) => {
+    evento.preventDefault();
+    if (evento.dataTransfer.files.length > 0) {
+      alSoltar(evento.dataTransfer.files);
+    }
+  });
+}
+
+configurarDropzone(dropzoneExcel, (archivos) => {
+  const transferencia = new DataTransfer();
+  transferencia.items.add(archivos[0]);
+  inputExcel.files = transferencia.files;
+  renderizarExcel();
+});
+
+configurarDropzone(dropzonePdfs, (archivos) => agregarPdfs(archivos));
+
+// --- Envío y resultado -------------------------------------------------------
+// Ninguno de los dos modos manda ya el detalle en JSON -el zip viaja
+// directo por streaming (sin base64) y el detalle por archivo/nombre, o
+// de errores/no encontrados, va como PDF adentro del zip. Acá solo se
+// arma un resumen corto con los conteos que vienen en las cabeceras.
+function mostrarResultadoSimpleResumen(totalArchivos, totalErrores, totalCoincidencias) {
+  limpiarResultado();
+  const hayProblemas = totalErrores > 0;
+  resultado.appendChild(nodoConIcono(
+    hayProblemas ? ICONS.alerta : ICONS.check,
+    `Se resaltaron ${totalCoincidencias} coincidencia(s) en ${totalArchivos} archivo(s)`,
+    `resultado-resumen ${hayProblemas ? "advertencia" : "exito"}`
+  ));
+
+  const detalle = document.createElement("p");
+  detalle.className = "item-resultado-detalle";
+  detalle.textContent = hayProblemas
+    ? `${totalErrores} archivo(s) con error — vea el detalle en Resumen_Modo_Simple.pdf, dentro del zip descargado.`
+    : "Vea el detalle por archivo y nombre en Resumen_Modo_Simple.pdf, dentro del zip descargado.";
+  resultado.appendChild(detalle);
+}
+
+function construirListaNoEncontrados(noEncontrados) {
+  const detalles = document.createElement("details");
+  detalles.className = "detalle-no-encontrados";
+  detalles.open = noEncontrados.length <= 5; // si son pocas, se muestran de una vez
+
+  const resumen = document.createElement("summary");
+  resumen.textContent = `Ver cédulas no encontradas (${noEncontrados.length})`;
+  detalles.appendChild(resumen);
+
+  const lista = document.createElement("ul");
+  lista.className = "sublista-resultado";
+  for (const texto of noEncontrados) {
+    const li = document.createElement("li");
+    li.className = "advertencia";
+    const envoltura = document.createElement("span");
+    envoltura.className = "icono-envoltura";
+    envoltura.innerHTML = ICONS.alerta;
+    const span = document.createElement("span");
+    span.textContent = texto;
+    li.appendChild(envoltura);
+    li.appendChild(span);
+    lista.appendChild(li);
+  }
+  detalles.appendChild(lista);
+  return detalles;
+}
+
+function mostrarResultadoClienteResumen(totalClientes, totalErrores, totalNoEncontrados, noEncontrados) {
+  limpiarResultado();
+  const hayProblemas = totalErrores > 0 || totalNoEncontrados > 0;
+  resultado.appendChild(nodoConIcono(
+    hayProblemas ? ICONS.alerta : ICONS.check,
+    `Se generaron ${totalClientes} PDF(s) por cliente`,
+    `resultado-resumen ${hayProblemas ? "advertencia" : "exito"}`
+  ));
+
+  if (hayProblemas) {
+    const partes = [];
+    if (totalErrores > 0) partes.push(`${totalErrores} archivo(s) con error`);
+    if (totalNoEncontrados > 0 && !noEncontrados) partes.push(`${totalNoEncontrados} cédula(s) no encontradas`);
+    if (partes.length > 0) {
+      const detalle = document.createElement("p");
+      detalle.className = "item-resultado-detalle";
+      detalle.textContent = `${partes.join(", ")} — vea el detalle en Resumen.pdf, dentro del zip descargado.`;
+      resultado.appendChild(detalle);
+    }
+  }
+
+  if (noEncontrados && noEncontrados.length > 0) {
+    resultado.appendChild(construirListaNoEncontrados(noEncontrados));
+  }
+}
+
+function decodificarListaB64(valor) {
+  // valor es base64 de un JSON UTF-8 -atob() solo decodifica a Latin-1,
+  // por eso hay que pasar los bytes por TextDecoder para no reventar tildes/ñ
+  if (!valor) return null;
+  try {
+    const binario = atob(valor);
+    const bytes = Uint8Array.from(binario, (c) => c.charCodeAt(0));
+    const texto = new TextDecoder("utf-8").decode(bytes);
+    return JSON.parse(texto);
+  } catch (error) {
+    console.error("[resaltador] no se pudo leer la lista de no encontrados:", error);
+    return null;
+  }
+}
+
+btn.addEventListener("click", async () => {
+  const nombres = inputNombres.value.trim();
+  const excel = inputExcel.files[0];
+  const archivos = pdfsSeleccionados;
+
+  if (!nombres && !excel) {
+    mostrarMensaje(ICONS.alerta, "Escriba al menos un nombre o suba un Excel con la lista.", "advertencia");
+    return;
+  }
+  if (archivos.length === 0) {
+    mostrarMensaje(ICONS.alerta, "Seleccione al menos un archivo PDF.", "advertencia");
+    return;
+  }
+  const noSonPdf = archivos.filter((a) => !a.name.toLowerCase().endsWith(".pdf"));
+  if (noSonPdf.length > 0) {
+    mostrarMensaje(ICONS.alerta, "Estos archivos no son PDF: " + noSonPdf.map((a) => a.name).join(", "), "advertencia");
+    return;
+  }
+  if (excel && !/\.(xlsx|xlsm)$/i.test(excel.name)) {
+    mostrarMensaje(ICONS.alerta, "El archivo de nombres debe ser un Excel (.xlsx o .xlsm).", "advertencia");
+    return;
+  }
+  const bytesTotales = archivos.reduce((suma, a) => suma + a.size, 0) + (excel ? excel.size : 0);
+  if (bytesTotales > MAX_BYTES_TOTAL) {
+    mostrarMensaje(ICONS.alerta, "Los archivos pesan demasiado en total (máximo 60 MB). Procese menos PDFs a la vez.", "advertencia");
+    return;
+  }
+
+  const datos = new FormData();
+  datos.append("nombres", nombres);
+  datos.append("formato", document.getElementById("formato").value);
+  if (excel) {
+    datos.append("excel", excel);
+  }
+  for (const archivo of archivos) {
+    datos.append("pdfs", archivo);
+  }
+
+  btn.disabled = true;
+  btnTexto.textContent = "Procesando...";
+  enlaceDescarga.style.display = "none";
+  barraProgreso.classList.add("activa");
+  limpiarResultado();
+
+  console.log(`[resaltador] enviando ${archivos.length} PDF(s)${excel ? " + excel" : ""}`);
+
+  try {
+    const respuesta = await fetch("/api/procesar", { method: "POST", body: datos });
+    const tipoContenido = respuesta.headers.get("Content-Type") || "";
+
+    // ahora cualquier error (o alguna respuesta inesperada) es lo único
+    // que viaja como JSON -el éxito, en los dos modos, es el zip directo
+    if (tipoContenido.includes("application/json")) {
+      let cuerpo;
+      try {
+        cuerpo = await respuesta.json();
+      } catch (errorJson) {
+        console.error("[resaltador] la respuesta no vino en JSON:", errorJson);
+        mostrarMensaje(ICONS.error, "El servidor respondió de forma inesperada. Intente de nuevo en un momento.", "error");
+        return;
+      }
+      console.error(`[resaltador] error del servidor (${respuesta.status}):`, cuerpo.error);
+      mostrarMensaje(ICONS.error, cuerpo.error || "Ocurrió un error.", "error");
+      return;
+    }
+
+    if (!respuesta.ok) {
+      console.error(`[resaltador] error del servidor (${respuesta.status}) sin JSON`);
+      mostrarMensaje(ICONS.error, "Ocurrió un error procesando los PDFs.", "error");
+      return;
+    }
+
+    const modo = respuesta.headers.get("X-Modo") || "simple";
+    if (modo === "cliente") {
+      const totalClientes = Number(respuesta.headers.get("X-Total-Clientes") || 0);
+      const totalErrores = Number(respuesta.headers.get("X-Total-Errores") || 0);
+      const totalNoEncontrados = Number(respuesta.headers.get("X-Total-No-Encontrados") || 0);
+      const noEncontrados = decodificarListaB64(respuesta.headers.get("X-No-Encontrados-B64"));
+      console.log(`[resaltador] listo: modo=cliente, ${totalClientes} PDF(s), ${totalErrores} error(es), ${totalNoEncontrados} no encontrados`);
+      mostrarResultadoClienteResumen(totalClientes, totalErrores, totalNoEncontrados, noEncontrados);
+    } else {
+      const totalArchivos = Number(respuesta.headers.get("X-Total-Archivos") || 0);
+      const totalErrores = Number(respuesta.headers.get("X-Total-Errores") || 0);
+      const totalCoincidencias = Number(respuesta.headers.get("X-Total-Coincidencias") || 0);
+      console.log(`[resaltador] listo: modo=simple, ${totalArchivos} archivo(s), ${totalCoincidencias} coincidencia(s), ${totalErrores} error(es)`);
+      mostrarResultadoSimpleResumen(totalArchivos, totalErrores, totalCoincidencias);
+    }
+
+    // el zip llega directo en el cuerpo de la respuesta, sin JSON ni base64 de por medio
+    const blob = await respuesta.blob();
+    enlaceDescarga.href = URL.createObjectURL(blob);
+    enlaceDescarga.style.display = "flex";
+  } catch (error) {
+    console.error("[resaltador] error de red:", error);
+    mostrarMensaje(ICONS.error, "Error de conexión. Verifique su internet e intente de nuevo.", "error");
+  } finally {
+    btn.disabled = false;
+    btnTexto.textContent = "Resaltar y generar PDF";
+    barraProgreso.classList.remove("activa");
+  }
+});
+</script>
+</body>
+</html>
