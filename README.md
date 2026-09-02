@@ -48,19 +48,20 @@ al terminar de procesar.
 
 ## Estructura del proyecto
 
-- `api/index.py` — servidor Flask: recibe la subida, decide el modo,
-  arma el `.zip` de respuesta. Punto de entrada para Render/gunicorn.
-- `api/templates/index.html` — la página completa (HTML + CSS + JS en un
-  solo archivo).
-- `resaltado_pdf.py` — toda la lógica de negocio: búsqueda de texto,
-  resaltado, recorte y armado de PDFs por cliente. Sin dependencias de
-  Flask ni de la interfaz, para poder reutilizarla o probarla aparte.
-- `main.py`, `interfaz.py` — prototipo de escritorio (Tkinter) anterior
-  a la versión web. Ya no es el foco del proyecto; se mantiene sin
-  actualizar mientras se decide si se retira.
-- `Procfile` — comando de arranque para Render (`gunicorn`).
-- `vercel.json` — configuración de un despliegue anterior en Vercel; ya
-  no se usa (el proyecto se movió a Render).
+- `api/` — aplicación web Flask: rutas (`index.py`, decide el modo, arma
+  el `.zip` de respuesta, es el punto de entrada para Render/gunicorn) y
+  la plantilla (`templates/index.html`, HTML + CSS + JS en un solo
+  archivo).
+- `resaltado_pdf.py` — núcleo de la lógica de negocio: búsqueda de texto,
+  resaltado, recorte y armado de PDFs por cliente con PyMuPDF. Sin
+  dependencias de Flask, para poder reutilizarlo o probarlo aparte.
+- `tests/` — pruebas automatizadas con pytest (ver sección de abajo).
+- `legacy/` — versión previa de escritorio en Tkinter (`main.py`,
+  `interfaz.py`), conservada solo como referencia histórica. Ya no es el
+  foco del proyecto ni se mantiene actualizada.
+- `Procfile` — comando de arranque para Render (`gunicorn`, con
+  `--workers 1 --threads 4` para no bloquear a otros usuarios mientras se
+  procesa una planilla pesada, dado que el plan de Render solo tiene 1 CPU).
 
 ## Cómo correrlo en local (para desarrollo)
 
@@ -94,6 +95,13 @@ pytest
 Render ejecuta `Procfile` (`gunicorn api.index:app`) sobre la rama
 conectada del repositorio. Cualquier cambio debe subirse a GitHub para
 que Render lo tome — un despliegue local no actualiza el sitio en línea.
+
+Como no hay persistencia, cada solicitud procesa sus PDFs en una carpeta
+temporal aislada que se borra al terminar. Si una solicitud se cancela o
+se cae a mitad de camino esa carpeta puede quedar huérfana; al arrancar
+el proceso (`api/index.py`, `_limpiar_temporales_antiguos`) se purgan
+automáticamente las que lleven más de una hora sin tocarse, para no
+saturar el disco efímero de Render.
 
 ## Notas de formato de PDF
 

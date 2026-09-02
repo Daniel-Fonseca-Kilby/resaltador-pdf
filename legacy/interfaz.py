@@ -7,9 +7,12 @@ quiere cambiar esta ventana por, por ejemplo, una versión web, no hay
 que tocar la lógica de resaltado en absoluto.
 """
 
+import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from resaltado_pdf import resaltar_nombres_en_pdf
 

@@ -4,12 +4,17 @@ inventados de conftest.py -nada de datos reales de empleados."""
 import base64
 import io
 import json
+import os
+import shutil
+import tempfile
+import time
 import zipfile
+from pathlib import Path
 
 import openpyxl
 import pytest
 
-from api.index import app
+from api.index import _limpiar_temporales_antiguos, app
 
 
 @pytest.fixture
@@ -219,3 +224,31 @@ def test_detectar_modo_excel_columnas_no_reconocidas_da_error(cliente_flask):
 
     assert respuesta.status_code == 400
     assert "no contiene una columna" in respuesta.get_json()["error"]
+
+
+def test_limpiar_temporales_antiguos_borra_viejos_y_conserva_nuevos():
+    temp_dir = Path(tempfile.gettempdir())
+
+    # 1. Crear carpeta vieja simulada (antigüedad de 2 horas)
+    carpeta_vieja = temp_dir / "resaltado_cliente_test_antigua"
+    carpeta_vieja.mkdir(parents=True, exist_ok=True)
+    hace_dos_horas = time.time() - 7200
+    os.utime(str(carpeta_vieja), (hace_dos_horas, hace_dos_horas))
+
+    # 2. Crear carpeta reciente (antigüedad de 5 segundos)
+    carpeta_nueva = temp_dir / "resaltado_cliente_test_reciente"
+    carpeta_nueva.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # Ejecutar limpieza con límite de 1 hora (3600s)
+        _limpiar_temporales_antiguos(segundos_vida=3600)
+
+        # Verificar: la vieja debió borrarse y la nueva conservarse
+        assert not carpeta_vieja.exists()
+        assert carpeta_nueva.exists()
+    finally:
+        # Limpieza manual del fixture
+        if carpeta_vieja.exists():
+            shutil.rmtree(carpeta_vieja, ignore_errors=True)
+        if carpeta_nueva.exists():
+            shutil.rmtree(carpeta_nueva, ignore_errors=True)

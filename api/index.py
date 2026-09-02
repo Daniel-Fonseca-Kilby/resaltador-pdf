@@ -10,6 +10,7 @@ import logging
 import shutil
 import sys
 import tempfile
+import time
 import unicodedata
 import zipfile
 from pathlib import Path
@@ -30,6 +31,35 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 60 * 1024 * 1024  # 60 MB, de sobra para una planilla
+
+
+def _limpiar_temporales_antiguos(segundos_vida: int = 3600) -> int:
+    """Busca y elimina carpetas temporales huérfanas con prefijo 'resaltado_'
+    en el directorio temporal del sistema operativo, cuya última modificación
+    sea mayor a 'segundos_vida' (por defecto 1 hora). Una petición cancelada
+    o interrumpida a mitad de camino deja su carpeta sin borrar -sin esto
+    se van acumulando PDFs huérfanos hasta saturar el disco efímero de
+    Render. Devuelve la cantidad de carpetas eliminadas."""
+    limite = time.time() - segundos_vida
+    temp_dir = Path(tempfile.gettempdir())
+    borradas = 0
+
+    for prefijo in ("resaltado_simple_", "resaltado_cliente_"):
+        for carpeta in temp_dir.glob(f"{prefijo}*"):
+            try:
+                if carpeta.is_dir() and carpeta.stat().st_mtime < limite:
+                    shutil.rmtree(carpeta, ignore_errors=True)
+                    borradas += 1
+            except Exception as error:
+                app.logger.debug("No se pudo borrar carpeta temporal %s: %s", carpeta, error)
+
+    if borradas > 0:
+        app.logger.info("Mantenimiento: se purgaron %d carpeta(s) temporales huérfanas", borradas)
+
+    return borradas
+
+
+_limpiar_temporales_antiguos()  # se ejecuta una vez al arrancar el proceso de Flask/Gunicorn
 
 
 @app.route("/", methods=["GET"])
@@ -355,7 +385,7 @@ _FORMATOS_VALIDOS = {"auto", "ccss", "mnk", "ins"}
 _LIMITE_BYTES_NO_ENCONTRADOS_HEADER = 4000
 
 
-def _procesar_modo_cliente(registros: list[dict], archivos, formato: str):
+def _procesar_modo_cliente(registros: list[dict], archivos, formato: str, resaltar_filas: bool = True):
     carpeta_temporal = Path(tempfile.mkdtemp(prefix="resaltado_cliente_"))
     carpeta_entrada = carpeta_temporal / "entrada"
     carpeta_entrada.mkdir(parents=True, exist_ok=True)
@@ -381,7 +411,7 @@ def _procesar_modo_cliente(registros: list[dict], archivos, formato: str):
 
         try:
             resultado = resaltar_por_cedula_y_exportar_por_cliente(
-                rutas_entrada, registros, str(carpeta_salida), formato
+                rutas_entrada, registros, str(carpeta_salida), formato, resaltar_filas=resaltar_filas
             )
         except Exception as error:
             app.logger.error("modo cliente: no se pudo procesar el lote: %s", error)
@@ -467,7 +497,9 @@ def procesar():
             formato = request.form.get("formato", "auto").strip().lower()
             if formato not in _FORMATOS_VALIDOS:
                 formato = "auto"
-            return _procesar_modo_cliente(registros, archivos, formato)
+            resaltar_param = request.form.get("resaltar", "true").strip().lower()
+            resaltar_filas = resaltar_param in ("true", "1", "on", "yes")
+            return _procesar_modo_cliente(registros, archivos, formato, resaltar_filas=resaltar_filas)
 
         texto_nombres = request.form.get("nombres", "").strip()
         nombres = _combinar_nombres(texto_nombres, archivo_excel)

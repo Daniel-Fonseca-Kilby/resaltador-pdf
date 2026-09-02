@@ -140,6 +140,23 @@
 
   input[type="file"] { display: none; }
 
+  .contenedor-checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--texto);
+  }
+
+  .contenedor-checkbox input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    accent-color: var(--azul);
+  }
+
   .dropzone {
     display: flex;
     align-items: center;
@@ -571,6 +588,16 @@
         </select>
       </div>
 
+      <div class="campo">
+        <label class="contenedor-checkbox">
+          <input type="checkbox" id="chkResaltar" checked>
+          <span class="texto-checkbox">Resaltar filas con franja amarilla</span>
+        </label>
+        <p class="hint">
+          Solo aplica al PDF fusionado por cliente. Si lo desmarca, el PDF se genera con las filas recortadas en su apariencia original, sin marcas amarillas encima (ideal para trámites formales ante clientes o auditorías).
+        </p>
+      </div>
+
       <div class="campo-acciones">
         <button id="btnProcesar">
           <span id="btnTexto">Resaltar y generar PDF</span>
@@ -979,6 +1006,7 @@ btn.addEventListener("click", async () => {
   const datos = new FormData();
   datos.append("nombres", nombres);
   datos.append("formato", document.getElementById("formato").value);
+  datos.append("resaltar", document.getElementById("chkResaltar").checked ? "true" : "false");
   if (excel) {
     datos.append("excel", excel);
   }

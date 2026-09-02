@@ -227,12 +227,16 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     registros: list[dict],
     carpeta_salida: str,
     formato: str = "auto",
+    resaltar_filas: bool = True,
 ) -> dict:
     """Busca las cédulas de 'registros' en los PDFs, recorta cada fila
-    encontrada (misma apariencia, resaltada) y arma un PDF por cliente,
-    apilando filas sin dejar huecos. 'formato' solo ayuda a ubicar el
-    encabezado de cada página (ver _PERFILES_ENCABEZADO / _techo_de_datos)
-    para no arrastrar filas de gente que no está en el Excel.
+    encontrada y arma un PDF por cliente, apilando filas sin dejar huecos.
+    'formato' solo ayuda a ubicar el encabezado de cada página (ver
+    _PERFILES_ENCABEZADO / _techo_de_datos) para no arrastrar filas de
+    gente que no está en el Excel. 'resaltar_filas' controla si cada fila
+    se marca con la franja amarilla o se deja tal cual salió de la
+    planilla original -algunos clientes (auditorías, entidades públicas)
+    piden el documento limpio, sin marcas encima.
 
     Una misma cédula puede estar asignada a más de un cliente en 'registros'
     (relación 1 a N -un oficial que cubrió turnos en varios puestos durante
@@ -375,7 +379,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                             else:
                                 estado["encabezado_actual"] = None
 
-                        _agregar_bloque(estado, documento, pagina, franja, resaltar=True)
+                        _agregar_bloque(estado, documento, pagina, franja, resaltar=resaltar_filas)
         except Exception as error:
             errores_por_archivo[nombre_archivo] = f"No se pudo procesar el archivo: {error}"
         finally:

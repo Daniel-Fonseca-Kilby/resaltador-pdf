@@ -220,3 +220,50 @@ def test_oficial_asignado_a_multiples_clientes_aparece_en_ambos_pdfs(ruta_pdf_ej
     # 3. No debe quedar como cédula no encontrada
     assert resultado["no_encontrados"] == []
 
+
+def test_exportar_por_cliente_sin_resaltado_no_agrega_anotaciones(ruta_pdf_ejemplo, registros_ejemplo, tmp_path):
+    """Cuando resaltar_filas=False, el PDF generado debe contener los textos
+    recortados pero ninguna anotación de resaltado (highlight)."""
+    carpeta_salida = tmp_path / "salida_limpia"
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [ruta_pdf_ejemplo],
+        registros_ejemplo,
+        str(carpeta_salida),
+        formato="mnk",
+        resaltar_filas=False,
+    )
+
+    ruta_cliente = resultado["archivos_por_cliente"]["Cliente Prueba Uno"]
+    documento = fitz.open(ruta_cliente)
+    try:
+        pagina = documento[0]
+        # Verificar que el texto existe
+        assert "JUAN" in pagina.get_text()
+        # Verificar que NO tiene ninguna anotación de resaltado
+        assert pagina.first_annot is None
+    finally:
+        documento.close()
+
+
+def test_exportar_por_cliente_con_resaltado_agrega_anotacion(ruta_pdf_ejemplo, registros_ejemplo, tmp_path):
+    """Por defecto (resaltar_filas=True), el PDF debe incluir las anotaciones."""
+    carpeta_salida = tmp_path / "salida_resaltada"
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [ruta_pdf_ejemplo],
+        registros_ejemplo,
+        str(carpeta_salida),
+        formato="mnk",
+        resaltar_filas=True,
+    )
+
+    ruta_cliente = resultado["archivos_por_cliente"]["Cliente Prueba Uno"]
+    documento = fitz.open(ruta_cliente)
+    try:
+        pagina = documento[0]
+        assert pagina.first_annot is not None
+        assert pagina.first_annot.type[0] == fitz.PDF_ANNOT_HIGHLIGHT
+    finally:
+        documento.close()
+
