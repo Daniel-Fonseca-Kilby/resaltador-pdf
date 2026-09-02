@@ -115,6 +115,22 @@ def _indice_por_sinonimos(encabezado, sinonimos: set) -> int | None:
     return None
 
 
+def _extraer_cedula_limpia(valor) -> str:
+    """Extrae únicamente los dígitos de una cédula, eliminando decimales
+    espurios que deja Excel cuando la columna quedó como celda numérica en
+    vez de texto (ej. una BUSCARV trae 303370238.0 -> '303370238')."""
+    if valor is None:
+        return ""
+    if isinstance(valor, float) and valor.is_integer():
+        return str(int(valor))
+    texto = str(valor).strip()
+    if "." in texto:
+        partes = texto.split(".")
+        if len(partes) == 2 and partes[1] == "0":
+            texto = partes[0]
+    return "".join(c for c in texto if c.isdigit())
+
+
 def _registros_desde_excel(archivo):
     """Si el Excel trae una columna de cédula y una de cliente (aceptando
     los sinónimos de _SINONIMOS_CEDULA/_SINONIMOS_CLIENTE), devuelve un
@@ -147,8 +163,9 @@ def _registros_desde_excel(archivo):
 
     registros = []
     for fila in filas:
-        cedula = str(fila[indice_cedula]).strip() if indice_cedula < len(fila) and fila[indice_cedula] else ""
+        valor_cedula = fila[indice_cedula] if indice_cedula < len(fila) else None
         cliente = str(fila[indice_cliente]).strip() if indice_cliente < len(fila) and fila[indice_cliente] else ""
+        cedula = _extraer_cedula_limpia(valor_cedula)
         if not cedula or not cliente:
             continue
         nombre = ""
@@ -156,7 +173,7 @@ def _registros_desde_excel(archivo):
             nombre = str(fila[indice_nombre]).strip()
         registros.append(
             {
-                "cedula": "".join(c for c in cedula if c.isdigit()),
+                "cedula": cedula,
                 "cliente": cliente,
                 "nombre": nombre,
             }
@@ -187,6 +204,25 @@ def detectar_modo_excel():
     return jsonify(modo="simple")
 
 
+def _nombre_zip_sin_colision(nombre: str, nombres_usados: set) -> str:
+    """Si 'nombre' ya se usó en este zip (ej. dos PDFs de origen que se
+    llamaban igual), le agrega un sufijo numérico -'Planilla_resaltado
+    (1).pdf'- para no pisar la entrada anterior."""
+    if nombre not in nombres_usados:
+        nombres_usados.add(nombre)
+        return nombre
+
+    stem = Path(nombre).stem
+    extension = Path(nombre).suffix
+    contador = 1
+    while True:
+        candidato = f"{stem} ({contador}){extension}"
+        if candidato not in nombres_usados:
+            nombres_usados.add(candidato)
+            return candidato
+        contador += 1
+
+
 def _procesar_modo_simple(nombres: list[str], archivos):
     """Igual que el modo cliente: el zip se manda directo por streaming
     (send_file), sin pasar por base64 -eso duplicaba el archivo en memoria
@@ -196,27 +232,32 @@ def _procesar_modo_simple(nombres: list[str], archivos):
     zip; en la respuesta solo quedan los conteos, en cabeceras."""
     coincidencias_por_archivo: dict[str, dict] = {}
     errores_por_archivo: dict[str, str] = {}
+    nombres_zip_usados: set[str] = set()
     buffer_zip = io.BytesIO()
     carpeta_temporal = Path(tempfile.mkdtemp(prefix="resaltado_simple_"))  # aislado por request, se borra al final
 
     try:
         with zipfile.ZipFile(buffer_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-            for archivo in archivos:
+            for i, archivo in enumerate(archivos):
                 nombre_archivo = Path(archivo.filename).name
                 if not nombre_archivo.lower().endswith(".pdf"):
                     errores_por_archivo[nombre_archivo] = "No es un archivo PDF."
                     continue
 
-                ruta_entrada = carpeta_temporal / nombre_archivo
+                # prefijo por índice en disco -es común subir varios PDFs
+                # con el mismo nombre (ej. descargados de portales distintos)
+                # y sin esto el segundo pisaría al primero antes de procesarlo
+                ruta_entrada = carpeta_temporal / f"{i}_{nombre_archivo}"
                 archivo.save(ruta_entrada)
 
                 nombre_salida = f"{Path(nombre_archivo).stem}_resaltado.pdf"
-                ruta_salida = carpeta_temporal / nombre_salida
+                ruta_salida = carpeta_temporal / f"{i}_{nombre_salida}"
 
                 try:
                     resultado = resaltar_nombres_en_pdf(str(ruta_entrada), nombres, str(ruta_salida))
-                    coincidencias_por_archivo[resultado.archivo] = resultado.coincidencias_por_nombre
-                    zf.write(ruta_salida, arcname=nombre_salida)
+                    arcname = _nombre_zip_sin_colision(nombre_salida, nombres_zip_usados)
+                    coincidencias_por_archivo[arcname] = resultado.coincidencias_por_nombre
+                    zf.write(ruta_salida, arcname=arcname)
                 except Exception as error:
                     app.logger.warning("Fallo procesando %s: %s", nombre_archivo, error)
                     errores_por_archivo[nombre_archivo] = str(error)
@@ -280,12 +321,15 @@ def _procesar_modo_cliente(registros: list[dict], archivos, formato: str):
     try:
         rutas_entrada = []
         pdfs_invalidos = []
-        for archivo in archivos:
+        for i, archivo in enumerate(archivos):
             nombre_archivo = Path(archivo.filename).name
             if not nombre_archivo.lower().endswith(".pdf"):
                 pdfs_invalidos.append(nombre_archivo)
                 continue
-            ruta = carpeta_entrada / nombre_archivo
+            # prefijo por índice: es común descargar "Planilla.pdf" de
+            # varios portales (CCSS, INS...) con el mismo nombre -sin esto
+            # el segundo archivo pisaría al primero antes de procesar nada
+            ruta = carpeta_entrada / f"{i}_{nombre_archivo}"
             archivo.save(ruta)
             rutas_entrada.append(str(ruta))
 

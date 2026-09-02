@@ -4,6 +4,7 @@ inventados de conftest.py -nada de datos reales de empleados."""
 import base64
 import io
 import json
+import zipfile
 
 import openpyxl
 import pytest
@@ -104,6 +105,30 @@ def test_procesar_modo_cliente_manda_no_encontrados_en_cabecera(cliente_flask, r
     lista = json.loads(base64.b64decode(respuesta.headers["X-No-Encontrados-B64"]).decode("utf-8"))
     assert len(lista) == 1
     assert "999999999" in lista[0]
+
+
+def test_procesar_multiples_pdfs_mismo_nombre(cliente_flask, ruta_pdf_ejemplo):
+    # Es común descargar "Planilla.pdf" de dos portales distintos (ej. CCSS
+    # de San José y de Heredia) con el mismo nombre de archivo -ninguno de
+    # los dos se debe perder ni pisar al otro.
+    datos = {
+        "nombres": "Juan Perez",
+        "pdfs": [
+            (_abrir_pdf(ruta_pdf_ejemplo), "planilla.pdf"),
+            (_abrir_pdf(ruta_pdf_ejemplo), "planilla.pdf"),
+        ],
+    }
+
+    respuesta = cliente_flask.post("/api/procesar", data=datos, content_type="multipart/form-data")
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["X-Total-Archivos"] == "2"
+
+    with zipfile.ZipFile(io.BytesIO(respuesta.data)) as zf:
+        nombres_pdf = [n for n in zf.namelist() if n.lower().endswith(".pdf")]
+
+    assert len(nombres_pdf) == 2
+    assert len(set(nombres_pdf)) == 2  # nombres distintos, ninguno se pisó
 
 
 def test_detectar_modo_excel_reconoce_columnas_de_cliente(cliente_flask, registros_ejemplo):

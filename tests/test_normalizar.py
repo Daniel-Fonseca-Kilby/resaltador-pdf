@@ -1,4 +1,5 @@
 """Pruebas de las utilidades de normalización de texto (no usan PDFs)."""
+from api.index import _extraer_cedula_limpia
 from resaltado_pdf import (
     _coincide_cliente,
     _nombre_archivo_seguro,
@@ -56,6 +57,22 @@ def test_coincide_cliente_tolera_cedula_sin_ceros_a_la_izquierda():
     # quedó como celda numérica en vez de texto (ej. 8 dígitos en vez de 9).
     mapa = {"10234056": "Cliente Uno"}
     assert _coincide_cliente("010234056", mapa) == "Cliente Uno"
+
+
+def test_extraer_cedula_limpia_elimina_decimal_cero():
+    # BUSCARV/ERP suele devolver la cédula como float (303370238.0) cuando
+    # la columna del Excel quedó como celda numérica en vez de texto.
+    assert _extraer_cedula_limpia(303370238.0) == "303370238"
+    assert _extraer_cedula_limpia("303370238.0") == "303370238"
+
+
+def test_extraer_cedula_limpia_con_guiones():
+    assert _extraer_cedula_limpia("0-30337-0238") == "0303370238"
+
+
+def test_extraer_cedula_limpia_valor_vacio():
+    assert _extraer_cedula_limpia(None) == ""
+    assert _extraer_cedula_limpia("") == ""
 
 
 def test_nombre_archivo_seguro_limpia_caracteres_invalidos():
