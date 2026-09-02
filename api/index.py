@@ -3,6 +3,7 @@ api/index.py
 """
 
 import base64
+import csv
 import io
 import json
 import logging
@@ -59,13 +60,61 @@ def _abrir_libro(archivo):
         )
 
 
+def _decodificar_csv(contenido_bytes: bytes) -> str:
+    """Intenta decodificar el CSV tolerando UTF-8 con BOM, UTF-8 estándar
+    y Latin-1 (Windows-1252, típica de exportaciones de sistemas contables
+    como Softland/SAP/Exactus en Costa Rica)."""
+    for codificacion in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            return contenido_bytes.decode(codificacion)
+        except UnicodeDecodeError:
+            continue
+    return contenido_bytes.decode("latin-1", errors="replace")
+
+
+def _detectar_delimitador(texto: str) -> str:
+    """Determina si el CSV usa comas o punto y coma -Excel en configuración
+    regional de Costa Rica/Latinoamérica exporta con punto y coma, porque
+    la coma queda reservada para los decimales."""
+    primera_linea = texto.splitlines()[0] if texto else ""
+    if primera_linea.count(";") > primera_linea.count(","):
+        return ";"
+    return ","
+
+
+def _filas_desde_archivo(archivo):
+    """Generador de tuplas de celdas fila por fila, ya sea que el usuario
+    haya subido un .xlsx/.xlsm o un .csv plano -para que el resto del
+    código (sinónimos de columnas, extracción de cédula/nombre) funcione
+    igual sin importar el formato de origen."""
+    nombre = Path(archivo.filename).name.lower()
+    archivo.seek(0)
+
+    if nombre.endswith((".xlsx", ".xlsm")):
+        libro = _abrir_libro(archivo)
+        try:
+            hoja = libro.active
+            for fila in hoja.iter_rows(values_only=True):
+                yield fila
+        finally:
+            libro.close()
+    elif nombre.endswith(".csv"):
+        contenido_bytes = archivo.read()
+        archivo.seek(0)
+        texto = _decodificar_csv(contenido_bytes)
+        delimitador = _detectar_delimitador(texto)
+        lector = csv.reader(io.StringIO(texto), delimiter=delimitador)
+        for fila in lector:
+            yield tuple(fila)
+    else:
+        raise ValueError("Formato de archivo no soportado. Suba un .xlsx, .xlsm o .csv.")
+
+
 def _nombres_desde_excel(archivo) -> list[str]:
-    """Lee la primera columna no vacía de cada fila de la primera hoja.
+    """Lee la primera columna no vacía de cada fila (Excel o CSV).
     Ignora la primera fila si parece un encabezado (ej. 'Nombre')."""
-    libro = _abrir_libro(archivo)
-    hoja = libro.active
     nombres = []
-    for i, fila in enumerate(hoja.iter_rows(values_only=True)):
+    for i, fila in enumerate(_filas_desde_archivo(archivo)):
         valor = next((c for c in fila if c not in (None, "")), None)
         if valor is None:
             continue
@@ -74,7 +123,6 @@ def _nombres_desde_excel(archivo) -> list[str]:
             continue
         if texto:
             nombres.append(texto)
-    libro.close()
     return nombres
 
 
@@ -132,20 +180,17 @@ def _extraer_cedula_limpia(valor) -> str:
 
 
 def _registros_desde_excel(archivo):
-    """Si el Excel trae una columna de cédula y una de cliente (aceptando
-    los sinónimos de _SINONIMOS_CEDULA/_SINONIMOS_CLIENTE), devuelve un
-    registro por fila. Si el Excel es de una sola columna, se asume lista
+    """Si el archivo (Excel o CSV) trae una columna de cédula y una de
+    cliente (aceptando los sinónimos de _SINONIMOS_CEDULA/_SINONIMOS_CLIENTE),
+    devuelve un registro por fila. Si es de una sola columna, se asume lista
     simple de nombres y devuelve None para que el llamador use el Modo
     Simple. Si trae varias columnas pero ninguna calza con lo esperado,
     mejor avisarle al usuario con un error claro que degradar en silencio
     a Modo Simple -probablemente quiso usar Modo Cliente y algo no calzó."""
-    libro = _abrir_libro(archivo)
-    hoja = libro.active
-    filas = hoja.iter_rows(values_only=True)
+    filas = _filas_desde_archivo(archivo)
 
     encabezado = next(filas, None)
     if encabezado is None:
-        libro.close()
         return None
 
     indice_cedula = _indice_por_sinonimos(encabezado, _SINONIMOS_CEDULA)
@@ -154,10 +199,9 @@ def _registros_desde_excel(archivo):
 
     if indice_cedula is None or indice_cliente is None:
         columnas_con_datos = sum(1 for valor in encabezado if valor not in (None, ""))
-        libro.close()
         if columnas_con_datos > 1:
             raise ValueError(
-                "El Excel no contiene una columna de Identificación/Cédula y Cliente válida."
+                "El archivo no contiene una columna de Identificación/Cédula y Cliente válida."
             )
         return None
 
@@ -179,7 +223,6 @@ def _registros_desde_excel(archivo):
             }
         )
 
-    libro.close()
     return registros
 
 
@@ -191,8 +234,8 @@ def detectar_modo_excel():
     archivo_excel = request.files.get("excel")
     if not archivo_excel or not archivo_excel.filename:
         return jsonify(error="No se recibió ningún archivo Excel."), 400
-    if not archivo_excel.filename.lower().endswith((".xlsx", ".xlsm")):
-        return jsonify(error="El archivo debe ser un Excel (.xlsx o .xlsm)."), 400
+    if not archivo_excel.filename.lower().endswith((".xlsx", ".xlsm", ".csv")):
+        return jsonify(error="El archivo debe ser un Excel (.xlsx / .xlsm) o un archivo .csv."), 400
 
     try:
         registros = _registros_desde_excel(archivo_excel)
@@ -411,8 +454,8 @@ def procesar():
     if not archivos:
         return jsonify(error="Seleccione al menos un archivo PDF."), 400
 
-    if archivo_excel and archivo_excel.filename and not archivo_excel.filename.lower().endswith((".xlsx", ".xlsm")):
-        return jsonify(error="El archivo de nombres debe ser un Excel (.xlsx o .xlsm)."), 400
+    if archivo_excel and archivo_excel.filename and not archivo_excel.filename.lower().endswith((".xlsx", ".xlsm", ".csv")):
+        return jsonify(error="El archivo de nombres debe ser un Excel (.xlsx / .xlsm) o un .csv."), 400
 
     try:
         registros = None

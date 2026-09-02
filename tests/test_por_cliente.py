@@ -190,3 +190,33 @@ def test_encabezado_se_repite_si_la_poliza_desborda_una_hoja(tmp_path):
     finally:
         documento.close()
 
+
+def test_oficial_asignado_a_multiples_clientes_aparece_en_ambos_pdfs(ruta_pdf_ejemplo, tmp_path):
+    """Si Juan Perez está asignado en el Excel tanto a 'Cliente Walmart' como
+    a 'Cliente BAC', su fila debe exportarse al PDF de ambos clientes."""
+    registros_multiples = [
+        {"cedula": "111111111", "cliente": "Cliente Walmart", "nombre": "Juan Perez"},
+        {"cedula": "111111111", "cliente": "Cliente BAC", "nombre": "Juan Perez"},
+    ]
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [ruta_pdf_ejemplo], registros_multiples, str(tmp_path / "salida"), formato="mnk"
+    )
+
+    # 1. Ambos clientes deben tener su propio archivo generado
+    assert "Cliente Walmart" in resultado["archivos_por_cliente"]
+    assert "Cliente BAC" in resultado["archivos_por_cliente"]
+
+    # 2. Ambos PDFs deben contener la fila de Juan Perez
+    doc_walmart = fitz.open(resultado["archivos_por_cliente"]["Cliente Walmart"])
+    doc_bac = fitz.open(resultado["archivos_por_cliente"]["Cliente BAC"])
+    try:
+        assert "JUAN" in doc_walmart[0].get_text()
+        assert "JUAN" in doc_bac[0].get_text()
+    finally:
+        doc_walmart.close()
+        doc_bac.close()
+
+    # 3. No debe quedar como cédula no encontrada
+    assert resultado["no_encontrados"] == []
+

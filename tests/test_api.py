@@ -131,6 +131,53 @@ def test_procesar_multiples_pdfs_mismo_nombre(cliente_flask, ruta_pdf_ejemplo):
     assert len(set(nombres_pdf)) == 2  # nombres distintos, ninguno se pisó
 
 
+def test_procesar_modo_cliente_con_csv_delimitado_por_comas(cliente_flask, ruta_pdf_ejemplo):
+    contenido_csv = (
+        "Identificacion,Cliente,Nombre\n"
+        "111111111,Cliente Prueba Uno,Juan Perez Mora\n"
+        "222222222,Cliente Prueba Uno,Maria Jose Solano\n"
+    ).encode("utf-8")
+
+    datos = {
+        "excel": (io.BytesIO(contenido_csv), "planillas.csv"),
+        "pdfs": (_abrir_pdf(ruta_pdf_ejemplo), "planilla.pdf"),
+    }
+    respuesta = cliente_flask.post("/api/procesar", data=datos, content_type="multipart/form-data")
+    assert respuesta.status_code == 200
+    assert respuesta.headers["X-Modo"] == "cliente"
+
+
+def test_procesar_modo_cliente_con_csv_punto_y_coma_latin1(cliente_flask, ruta_pdf_ejemplo):
+    # CSV con punto y coma y caracteres con tilde/ñ en Latin-1 (exportación típica de ERP)
+    contenido_csv = (
+        "Cédula;Empresa;Colaborador\n"
+        "111111111;Cliente Prueba Uno;Juan Pérez\n"
+    ).encode("latin-1")
+
+    datos = {
+        "excel": (io.BytesIO(contenido_csv), "exportacion_erp.csv"),
+        "pdfs": (_abrir_pdf(ruta_pdf_ejemplo), "planilla.pdf"),
+    }
+    respuesta = cliente_flask.post("/api/procesar", data=datos, content_type="multipart/form-data")
+    assert respuesta.status_code == 200
+    assert respuesta.headers["X-Modo"] == "cliente"
+
+
+def test_detectar_modo_excel_con_csv(cliente_flask):
+    contenido_csv = (
+        "Identificacion,Cliente,Nombre\n"
+        "111111111,Cliente Prueba Uno,Juan Perez Mora\n"
+    ).encode("utf-8")
+
+    datos = {"excel": (io.BytesIO(contenido_csv), "planillas.csv")}
+    respuesta = cliente_flask.post("/api/detectar-modo-excel", data=datos, content_type="multipart/form-data")
+
+    assert respuesta.status_code == 200
+    cuerpo = respuesta.get_json()
+    assert cuerpo["modo"] == "cliente"
+    assert cuerpo["total_registros"] == 1
+
+
 def test_detectar_modo_excel_reconoce_columnas_de_cliente(cliente_flask, registros_ejemplo):
     datos = {"excel": (_crear_excel_cliente(registros_ejemplo), "planilla.xlsx")}
 

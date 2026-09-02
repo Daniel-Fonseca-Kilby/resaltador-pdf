@@ -148,15 +148,17 @@ def _normalizar_cedula(digitos: str) -> str:
     return digitos.lstrip("0") or "0"
 
 
-def _coincide_cliente(digitos_palabra: str, mapa_cedulas: dict) -> str | None:
-    """Tolera que la planilla anteponga un dígito de tipo de id (ej. CCSS:
-    '0-303370238') y que a la cédula le falten ceros iniciales frente a la
-    del Excel. 'mapa_cedulas' debe venir con las claves ya normalizadas
-    (ver _normalizar_cedula)."""
-    cliente = mapa_cedulas.get(_normalizar_cedula(digitos_palabra))
-    if cliente is None and len(digitos_palabra) > 1:
-        cliente = mapa_cedulas.get(_normalizar_cedula(digitos_palabra[1:]))
-    return cliente
+def _coincide_cliente(digitos_palabra: str, mapa_cedulas: dict) -> list[str]:
+    """Devuelve todos los clientes a los que pertenece esta cédula (relación
+    1 a N: un oficial puede cubrir turnos en más de un cliente durante la
+    misma quincena). Tolera que la planilla anteponga un dígito de tipo de
+    id (ej. CCSS: '0-303370238') y que a la cédula le falten ceros iniciales
+    frente a la del Excel. 'mapa_cedulas' debe venir con las claves ya
+    normalizadas (ver _normalizar_cedula)."""
+    clientes = mapa_cedulas.get(_normalizar_cedula(digitos_palabra))
+    if not clientes and len(digitos_palabra) > 1:
+        clientes = mapa_cedulas.get(_normalizar_cedula(digitos_palabra[1:]))
+    return clientes or []
 
 
 # frases que solo salen en la fila de títulos de cada formato conocido
@@ -232,13 +234,25 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     encabezado de cada página (ver _PERFILES_ENCABEZADO / _techo_de_datos)
     para no arrastrar filas de gente que no está en el Excel.
 
+    Una misma cédula puede estar asignada a más de un cliente en 'registros'
+    (relación 1 a N -un oficial que cubrió turnos en varios puestos durante
+    la quincena): en ese caso su fila se agrega al PDF de cada cliente al
+    que está asignado, no solo al último que aparece en el Excel.
+
     El encabezado se repite una vez por archivo/póliza (no por página de
     origen): si un cliente tiene oficiales en varias páginas del mismo PDF
     solo se lleva el encabezado una vez, pero si cambia de archivo (otra
     póliza) se fuerza una hoja de salida limpia con su propio encabezado.
     Y si esa póliza termina desbordando a una segunda hoja de salida, el
     encabezado se repite ahí también para no perder el contexto."""
-    mapa_cedulas = {_normalizar_cedula(r["cedula"]): r["cliente"] for r in registros if r.get("cedula")}
+    mapa_cedulas: dict[str, list[str]] = {}
+    for r in registros:
+        cedula, cliente = r.get("cedula"), r.get("cliente")
+        if not cedula or not cliente:
+            continue
+        clientes = mapa_cedulas.setdefault(_normalizar_cedula(cedula), [])
+        if cliente not in clientes:
+            clientes.append(cliente)
     estado_por_cliente: dict[str, dict] = {}
     cedulas_encontradas: set[str] = set()
     errores_por_archivo: dict[str, str] = {}
@@ -316,8 +330,8 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                     digitos = "".join(c for c in palabra if c.isdigit())
                     if not digitos:
                         continue
-                    cliente = _coincide_cliente(digitos, mapa_cedulas)
-                    if cliente is None:
+                    clientes = _coincide_cliente(digitos, mapa_cedulas)
+                    if not clientes:
                         continue
                     clave_cedula = _normalizar_cedula(digitos)
                     if clave_cedula not in mapa_cedulas and len(digitos) > 1:
@@ -328,37 +342,40 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                     fila_y1 = max(w[3] for w in palabras if abs(w[1] - y0) <= _TOLERANCIA_FILA)
                     franja = fitz.Rect(pagina.rect.x0, fila_y0 - 2, pagina.rect.x1, fila_y1 + 2)
 
-                    vistas = franjas_vistas.setdefault(cliente, [])
-                    if franja in vistas:
-                        continue
-                    vistas.append(franja)
+                    # un mismo oficial puede estar asignado a varios clientes
+                    # (relación 1 a N) -su fila se agrega al PDF de cada uno
+                    for cliente in clientes:
+                        vistas = franjas_vistas.setdefault(cliente, [])
+                        if franja in vistas:
+                            continue
+                        vistas.append(franja)
 
-                    estado = _obtener_estado(cliente, pagina)
+                        estado = _obtener_estado(cliente, pagina)
 
-                    if estado["archivo_actual"] != ruta_pdf:
-                        # nueva póliza para este cliente -hoja limpia y encabezado propio
-                        # (si el cliente ya venía de otro archivo se repite este mismo
-                        # bloque de encabezado en cada hoja que la póliza necesite)
-                        if not techo_calculado:
-                            techo_datos = _techo_de_datos(pagina, formato, textpage=textpage)
-                            techo_calculado = True
-                        estado["pagina"] = None
-                        estado["archivo_actual"] = ruta_pdf
-                        if techo_datos is not None and techo_datos > 4:
-                            franja_encabezado = fitz.Rect(pagina.rect.x0, 0, pagina.rect.x1, techo_datos - 2)
-                            estado["encabezado_actual"] = {
-                                "documento": documento,
-                                "pagina": pagina,
-                                "franja": franja_encabezado,
-                            }
-                            _agregar_bloque(
-                                estado, documento, pagina, franja_encabezado,
-                                resaltar=False, repetir_encabezado=False,
-                            )
-                        else:
-                            estado["encabezado_actual"] = None
+                        if estado["archivo_actual"] != ruta_pdf:
+                            # nueva póliza para este cliente -hoja limpia y encabezado propio
+                            # (si el cliente ya venía de otro archivo se repite este mismo
+                            # bloque de encabezado en cada hoja que la póliza necesite)
+                            if not techo_calculado:
+                                techo_datos = _techo_de_datos(pagina, formato, textpage=textpage)
+                                techo_calculado = True
+                            estado["pagina"] = None
+                            estado["archivo_actual"] = ruta_pdf
+                            if techo_datos is not None and techo_datos > 4:
+                                franja_encabezado = fitz.Rect(pagina.rect.x0, 0, pagina.rect.x1, techo_datos - 2)
+                                estado["encabezado_actual"] = {
+                                    "documento": documento,
+                                    "pagina": pagina,
+                                    "franja": franja_encabezado,
+                                }
+                                _agregar_bloque(
+                                    estado, documento, pagina, franja_encabezado,
+                                    resaltar=False, repetir_encabezado=False,
+                                )
+                            else:
+                                estado["encabezado_actual"] = None
 
-                    _agregar_bloque(estado, documento, pagina, franja, resaltar=True)
+                        _agregar_bloque(estado, documento, pagina, franja, resaltar=True)
         except Exception as error:
             errores_por_archivo[nombre_archivo] = f"No se pudo procesar el archivo: {error}"
         finally:

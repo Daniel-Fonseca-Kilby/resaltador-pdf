@@ -511,12 +511,12 @@
       </div>
 
       <div class="campo">
-        <label>Excel con la lista de nombres (opcional)</label>
+        <label>Excel o CSV con la lista de nombres (opcional)</label>
         <p class="hint">Lista simple (una columna de nombres), o el formato completo con columnas "Identificación" y "Cliente" — en ese caso se genera un PDF fusionado por cada cliente en vez de resaltar por nombre.</p>
 
-        <div class="dropzone" id="dropzoneExcel" tabindex="0" role="button" aria-label="Elegir archivo Excel">
-          <input type="file" id="excel" accept=".xlsx,.xlsm" hidden>
-          <span><strong>Arrastre el Excel aquí</strong> o haga clic para elegirlo (.xlsx / .xlsm)</span>
+        <div class="dropzone" id="dropzoneExcel" tabindex="0" role="button" aria-label="Elegir archivo Excel o CSV">
+          <input type="file" id="excel" accept=".xlsx,.xlsm,.csv" hidden>
+          <span><strong>Arrastre el archivo aquí</strong> o haga clic para elegirlo (.xlsx / .xlsm / .csv)</span>
         </div>
 
         <div class="archivo-elegido" id="excelElegido" hidden>
@@ -711,13 +711,13 @@ function renderizarExcel() {
     excelElegido.hidden = false;
     dropzoneExcel.hidden = true;
 
-    if (/\.(xlsx|xlsm)$/i.test(archivo.name)) {
+    if (/\.(xlsx|xlsm|csv)$/i.test(archivo.name)) {
       detectarModoExcel(archivo);
     } else {
       tokenDeteccionExcel++;
       excelModoIndicador.hidden = false;
       excelModoIndicador.className = "excel-modo-indicador error";
-      excelModoIndicador.textContent = "El archivo debe ser un Excel (.xlsx o .xlsm).";
+      excelModoIndicador.textContent = "El archivo debe ser un Excel (.xlsx / .xlsm) o un .csv.";
     }
   }
 }
@@ -966,8 +966,8 @@ btn.addEventListener("click", async () => {
     mostrarMensaje(ICONS.alerta, "Estos archivos no son PDF: " + noSonPdf.map((a) => a.name).join(", "), "advertencia");
     return;
   }
-  if (excel && !/\.(xlsx|xlsm)$/i.test(excel.name)) {
-    mostrarMensaje(ICONS.alerta, "El archivo de nombres debe ser un Excel (.xlsx o .xlsm).", "advertencia");
+  if (excel && !/\.(xlsx|xlsm|csv)$/i.test(excel.name)) {
+    mostrarMensaje(ICONS.alerta, "El archivo de nombres debe ser un Excel (.xlsx / .xlsm) o un .csv.", "advertencia");
     return;
   }
   const bytesTotales = archivos.reduce((suma, a) => suma + a.size, 0) + (excel ? excel.size : 0);

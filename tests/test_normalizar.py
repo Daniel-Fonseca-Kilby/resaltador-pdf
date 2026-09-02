@@ -28,20 +28,26 @@ def test_variantes_ene_reemplaza_por_espacio_y_por_nada():
 
 
 def test_coincide_cliente_exacto():
-    mapa = {"111111111": "Cliente Uno"}
-    assert _coincide_cliente("111111111", mapa) == "Cliente Uno"
+    mapa = {"111111111": ["Cliente Uno"]}
+    assert _coincide_cliente("111111111", mapa) == ["Cliente Uno"]
 
 
 def test_coincide_cliente_con_digito_de_tipo_identificacion_antepuesto():
     # Algunas planillas (ej. CCSS) anteponen un dígito de tipo de
     # identificación al número real de cédula (ej. "0-303370238").
-    mapa = {"303370238": "Cliente Uno"}
-    assert _coincide_cliente("0303370238", mapa) == "Cliente Uno"
+    mapa = {"303370238": ["Cliente Uno"]}
+    assert _coincide_cliente("0303370238", mapa) == ["Cliente Uno"]
 
 
 def test_coincide_cliente_no_encontrado():
-    mapa = {"111111111": "Cliente Uno"}
-    assert _coincide_cliente("999999999", mapa) is None
+    mapa = {"111111111": ["Cliente Uno"]}
+    assert _coincide_cliente("999999999", mapa) == []
+
+
+def test_coincide_cliente_devuelve_varios_clientes_para_la_misma_cedula():
+    # Un oficial puede cubrir turnos en más de un cliente (relación 1 a N).
+    mapa = {"111111111": ["Cliente Walmart", "Cliente BAC"]}
+    assert _coincide_cliente("111111111", mapa) == ["Cliente Walmart", "Cliente BAC"]
 
 
 def test_normalizar_cedula_quita_ceros_a_la_izquierda():
@@ -55,8 +61,8 @@ def test_normalizar_cedula_sin_ceros_no_cambia():
 def test_coincide_cliente_tolera_cedula_sin_ceros_a_la_izquierda():
     # El Excel puede traer la cédula sin el cero inicial si la columna
     # quedó como celda numérica en vez de texto (ej. 8 dígitos en vez de 9).
-    mapa = {"10234056": "Cliente Uno"}
-    assert _coincide_cliente("010234056", mapa) == "Cliente Uno"
+    mapa = {"10234056": ["Cliente Uno"]}
+    assert _coincide_cliente("010234056", mapa) == ["Cliente Uno"]
 
 
 def test_extraer_cedula_limpia_elimina_decimal_cero():
