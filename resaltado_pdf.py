@@ -7,10 +7,14 @@ anotaciones de resaltado ("highlight"), SIN modificar el resto del documento
 
 """
 
-import pymupdf as fitz  # PyMuPDF (alias 'fitz' por compatibilidad con ejemplos/documentación)
+import io
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
+
+import openpyxl
+import pymupdf as fitz  # PyMuPDF (alias 'fitz' por compatibilidad con ejemplos/documentación)
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 
 @dataclass
@@ -249,16 +253,26 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     póliza) se fuerza una hoja de salida limpia con su propio encabezado.
     Y si esa póliza termina desbordando a una segunda hoja de salida, el
     encabezado se repite ahí también para no perder el contexto."""
-    mapa_cedulas: dict[str, list[str]] = {}
+    # una entrada por cada par (cédula, cliente) único del Excel -si la
+    # misma fila viene duplicada se conserva solo la primera aparición
+    registros_unicos: dict[tuple[str, str], dict] = {}
     for r in registros:
         cedula, cliente = r.get("cedula"), r.get("cliente")
         if not cedula or not cliente:
             continue
-        clientes = mapa_cedulas.setdefault(_normalizar_cedula(cedula), [])
+        clave = (_normalizar_cedula(cedula), cliente)
+        if clave not in registros_unicos:
+            registros_unicos[clave] = {"cedula": cedula, "cliente": cliente, "nombre": r.get("nombre", "")}
+
+    mapa_cedulas: dict[str, list[str]] = {}
+    for clave_cedula, cliente in registros_unicos:
+        clientes = mapa_cedulas.setdefault(clave_cedula, [])
         if cliente not in clientes:
             clientes.append(cliente)
+
     estado_por_cliente: dict[str, dict] = {}
-    cedulas_encontradas: set[str] = set()
+    # (clave_cedula, cliente) -> set de nombres de archivo/póliza donde se encontró
+    polizas_encontradas: dict[tuple[str, str], set] = {}
     errores_por_archivo: dict[str, str] = {}
 
     def _obtener_estado(cliente: str, pagina_origen) -> dict:
@@ -340,7 +354,6 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                     clave_cedula = _normalizar_cedula(digitos)
                     if clave_cedula not in mapa_cedulas and len(digitos) > 1:
                         clave_cedula = _normalizar_cedula(digitos[1:])
-                    cedulas_encontradas.add(clave_cedula)
 
                     fila_y0 = min(w[1] for w in palabras if abs(w[1] - y0) <= _TOLERANCIA_FILA)
                     fila_y1 = max(w[3] for w in palabras if abs(w[1] - y0) <= _TOLERANCIA_FILA)
@@ -349,6 +362,8 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                     # un mismo oficial puede estar asignado a varios clientes
                     # (relación 1 a N) -su fila se agrega al PDF de cada uno
                     for cliente in clientes:
+                        polizas_encontradas.setdefault((clave_cedula, cliente), set()).add(nombre_archivo)
+
                         vistas = franjas_vistas.setdefault(cliente, [])
                         if franja in vistas:
                             continue
@@ -394,15 +409,27 @@ def resaltar_por_cedula_y_exportar_por_cliente(
         estado["documento"].close()
         archivos_por_cliente[cliente] = str(ruta)
 
+    detalle_registros = []
+    for (clave_cedula, cliente), datos in registros_unicos.items():
+        polizas = sorted(polizas_encontradas.get((clave_cedula, cliente), set()))
+        detalle_registros.append({
+            "cedula": datos["cedula"],
+            "nombre": datos["nombre"],
+            "cliente": cliente,
+            "polizas": polizas,
+            "encontrado": bool(polizas),
+        })
+
     no_encontrados = [
-        r for r in registros
-        if r.get("cedula") and _normalizar_cedula(r["cedula"]) not in cedulas_encontradas
+        {"cedula": d["cedula"], "cliente": d["cliente"], "nombre": d["nombre"]}
+        for d in detalle_registros if not d["encontrado"]
     ]
 
     return {
         "archivos_por_cliente": archivos_por_cliente,
         "no_encontrados": no_encontrados,
         "errores_por_archivo": errores_por_archivo,
+        "detalle_registros": detalle_registros,
     }
 
 
@@ -437,6 +464,107 @@ def generar_pdf_resumen(titulo: str, secciones: list[tuple[str, list[str]]]) -> 
     datos = documento.tobytes()
     documento.close()
     return datos
+
+
+_AZUL_VMA = "0A1F3D"
+_RELLENO_ENCABEZADO = PatternFill("solid", fgColor=_AZUL_VMA)
+_FUENTE_ENCABEZADO = Font(color="FFFFFF", bold=True)
+_BORDE_CELDA = Border(*(Side(style="thin", color="D7DBE3"),) * 4)
+
+
+def _escribir_encabezado_excel(hoja, titulos: list[str]) -> None:
+    hoja.append(titulos)
+    for celda in hoja[1]:
+        celda.fill = _RELLENO_ENCABEZADO
+        celda.font = _FUENTE_ENCABEZADO
+        celda.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+
+def _autoajustar_columnas_excel(hoja) -> None:
+    for columna in hoja.columns:
+        ancho = max((len(str(celda.value)) for celda in columna if celda.value is not None), default=8)
+        hoja.column_dimensions[columna[0].column_letter].width = min(ancho + 4, 60)
+
+
+def _bordear_filas_excel(hoja) -> None:
+    for fila in hoja.iter_rows(min_row=2, max_row=hoja.max_row):
+        for celda in fila:
+            celda.border = _BORDE_CELDA
+
+
+def generar_excel_resumen(detalle_registros: list[dict]) -> bytes:
+    """Arma el Excel de facturación (dos pestañas) que acompaña al zip del
+    modo cliente, para que RRHH/Facturación no tenga que abrir los PDFs uno
+    por uno a contar oficiales a mano.
+
+    'detalle_registros' es la lista que devuelve
+    resaltar_por_cedula_y_exportar_por_cliente bajo la llave del mismo
+    nombre: un dict por cada (cédula, cliente) único del Excel, con
+    'cedula', 'nombre', 'cliente', 'polizas' (archivos donde se encontró)
+    y 'encontrado'.
+
+    Pestaña 1 ('Resumen por Cliente'): una fila por cliente con el total
+    de oficiales listos para cobrar, cuántos faltan y en qué pólizas
+    aparecieron -para copiar directo al sistema de facturación.
+    Pestaña 2 ('Detalle de Oficiales'): una fila por oficial, para
+    conciliar reclamos puntuales ("¿por qué a este cliente le falta un
+    guarda?")."""
+    libro = openpyxl.Workbook()
+
+    hoja_resumen = libro.active
+    hoja_resumen.title = "Resumen por Cliente"
+    _escribir_encabezado_excel(hoja_resumen, [
+        "Cliente", "Pólizas Involucradas", "Oficiales Encontrados", "Cédulas Faltantes", "Estado",
+    ])
+
+    por_cliente: dict[str, dict] = {}
+    for d in detalle_registros:
+        entrada = por_cliente.setdefault(d["cliente"], {"polizas": set(), "encontrados": 0, "faltantes": 0})
+        if d["encontrado"]:
+            entrada["encontrados"] += 1
+            entrada["polizas"].update(d["polizas"])
+        else:
+            entrada["faltantes"] += 1
+
+    total_encontrados = 0
+    total_faltantes = 0
+    for cliente in sorted(por_cliente):
+        datos = por_cliente[cliente]
+        estado = "🟢 Completo" if datos["faltantes"] == 0 else f"🟡 Pendiente ({datos['faltantes']})"
+        hoja_resumen.append([
+            cliente,
+            ", ".join(sorted(datos["polizas"])) or "—",
+            datos["encontrados"],
+            datos["faltantes"],
+            estado,
+        ])
+        total_encontrados += datos["encontrados"]
+        total_faltantes += datos["faltantes"]
+
+    hoja_resumen.append(["TOTAL GENERAL", "—", total_encontrados, total_faltantes, ""])
+    for celda in hoja_resumen[hoja_resumen.max_row]:
+        celda.font = Font(bold=True)
+    _bordear_filas_excel(hoja_resumen)
+    _autoajustar_columnas_excel(hoja_resumen)
+
+    hoja_detalle = libro.create_sheet("Detalle de Oficiales")
+    _escribir_encabezado_excel(hoja_detalle, [
+        "Cédula", "Nombre Completo", "Cliente Asignado", "Póliza / Archivo de Origen", "¿Aparece en Planilla?",
+    ])
+    for d in sorted(detalle_registros, key=lambda d: (d["cliente"], d["cedula"])):
+        hoja_detalle.append([
+            d["cedula"],
+            d["nombre"] or "—",
+            d["cliente"],
+            ", ".join(d["polizas"]) if d["polizas"] else "(Ninguno)",
+            "✅ Sí" if d["encontrado"] else "❌ No encontrado",
+        ])
+    _bordear_filas_excel(hoja_detalle)
+    _autoajustar_columnas_excel(hoja_detalle)
+
+    buffer = io.BytesIO()
+    libro.save(buffer)
+    return buffer.getvalue()
 
 
 def procesar_carpeta(ruta_carpeta_entrada: str, nombres: list[str], ruta_carpeta_salida: str) -> list[ResultadoResaltado]:

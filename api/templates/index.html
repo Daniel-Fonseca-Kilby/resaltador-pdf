@@ -472,6 +472,65 @@
   .detalle-no-encontrados[open] summary { margin-bottom: 6px; }
   .detalle-no-encontrados ul.sublista-resultado { margin-left: 0; }
 
+  .lista-pdfs-resultado {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  .tarjeta-pdf {
+    border: 1px solid var(--borde);
+    border-radius: var(--radio);
+    padding: 10px 12px;
+  }
+
+  .tarjeta-pdf-nombre {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    font-size: 12.5px;
+    color: var(--texto);
+    overflow-wrap: anywhere;
+  }
+
+  .tarjeta-pdf-acciones {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--borde);
+  }
+
+  .tarjeta-pdf-boton {
+    flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    border: 1px solid var(--borde);
+    background: #fff;
+    color: var(--texto);
+  }
+
+  .tarjeta-pdf-boton:hover:not(:disabled) { background: #f3f5f9; }
+  .tarjeta-pdf-boton:disabled { cursor: default; opacity: 0.7; }
+
+  .tarjeta-pdf-boton.primario {
+    background: var(--azul);
+    color: #fff;
+    border-color: var(--azul);
+  }
+
+  .tarjeta-pdf-boton.primario:hover:not(:disabled) { background: var(--azul-claro); }
+
   #descarga {
     display: none;
     align-items: center;
@@ -616,12 +675,15 @@
 
   <footer>Grupo VMA · Sistema interno de planillas</footer>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
 const ICONS = {
   check: '<svg class="icono" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>',
   alerta: '<svg class="icono" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
   error: '<svg class="icono" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6"/><path d="M9 9l6 6"/></svg>',
   archivo: '<svg class="icono" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>',
+  ver: '<svg class="icono" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+  descargar: '<svg class="icono" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>',
 };
 
 function formatoBytes(bytes) {
@@ -960,6 +1022,101 @@ function mostrarResultadoClienteResumen(totalClientes, totalErrores, totalNoEnco
   }
 }
 
+// --- Vista previa por archivo (RQ-13) -----------------------------------
+// El zip ya llega completo como Blob en memoria del navegador; en vez de
+// obligar a descargarlo/descomprimirlo a mano para ver un PDF, se lee acá
+// mismo con JSZip y cada archivo se abre en una pestaña nueva con una URL
+// temporal (URL.createObjectURL) -no hay ningún cambio en el servidor.
+const NOMBRES_RESUMEN_EXCLUIDOS = /^Resumen(_Modo_Simple)?\.pdf$/i;
+
+async function construirListaPdfsDelZip(blobZip) {
+  if (typeof JSZip === "undefined") {
+    console.warn("[resaltador] JSZip no cargó -sin vista previa por archivo esta vez");
+    return null;
+  }
+
+  let zip;
+  try {
+    zip = await JSZip.loadAsync(blobZip);
+  } catch (error) {
+    console.error("[resaltador] no se pudo leer el zip para la vista previa:", error);
+    return null;
+  }
+
+  const nombresPdf = Object.keys(zip.files)
+    .filter((nombre) => !zip.files[nombre].dir)
+    .filter((nombre) => nombre.toLowerCase().endsWith(".pdf"))
+    .filter((nombre) => !NOMBRES_RESUMEN_EXCLUIDOS.test(nombre))
+    .sort((a, b) => a.localeCompare(b, "es"));
+
+  if (nombresPdf.length === 0) return null;
+
+  const lista = document.createElement("div");
+  lista.className = "lista-pdfs-resultado";
+  for (const nombre of nombresPdf) {
+    lista.appendChild(construirTarjetaPdf(zip, nombre));
+  }
+  return lista;
+}
+
+function construirTarjetaPdf(zip, nombre) {
+  const tarjeta = document.createElement("div");
+  tarjeta.className = "tarjeta-pdf";
+  tarjeta.appendChild(nodoConIcono(ICONS.archivo, nombre, "tarjeta-pdf-nombre"));
+
+  const acciones = document.createElement("div");
+  acciones.className = "tarjeta-pdf-acciones";
+
+  const botonVer = document.createElement("button");
+  botonVer.type = "button";
+  botonVer.className = "tarjeta-pdf-boton primario";
+  botonVer.innerHTML = `${ICONS.ver}<span>Ver en el navegador</span>`;
+  botonVer.addEventListener("click", () => abrirPdfDelZip(zip, nombre, botonVer, false));
+
+  const botonDescargar = document.createElement("button");
+  botonDescargar.type = "button";
+  botonDescargar.className = "tarjeta-pdf-boton";
+  botonDescargar.innerHTML = `${ICONS.descargar}<span>Descargar</span>`;
+  botonDescargar.addEventListener("click", () => abrirPdfDelZip(zip, nombre, botonDescargar, true));
+
+  acciones.appendChild(botonVer);
+  acciones.appendChild(botonDescargar);
+  tarjeta.appendChild(acciones);
+  return tarjeta;
+}
+
+async function abrirPdfDelZip(zip, nombre, boton, descargar) {
+  const spanTexto = boton.querySelector("span");
+  const textoOriginal = spanTexto.textContent;
+  boton.disabled = true;
+  spanTexto.textContent = descargar ? "Descargando..." : "Abriendo...";
+
+  try {
+    const bytes = await zip.file(nombre).async("uint8array");
+    const blob = new Blob([bytes], { type: "application/pdf" });
+    const url = URL.createObjectURL(blob);
+
+    if (descargar) {
+      const enlace = document.createElement("a");
+      enlace.href = url;
+      enlace.download = nombre;
+      enlace.click();
+    } else {
+      window.open(url, "_blank");
+    }
+    // no se revoca la URL de inmediato: si es "Ver", la pestaña nueva la
+    // sigue usando -el navegador la libera solo al cerrar la pestaña/página
+    console.log(`[resaltador] ${descargar ? "descargado" : "abierto en pestaña nueva"}: ${nombre}`);
+  } catch (error) {
+    console.error(`[resaltador] no se pudo abrir "${nombre}":`, error);
+    spanTexto.textContent = "No se pudo abrir";
+    setTimeout(() => { spanTexto.textContent = textoOriginal; }, 2500);
+  } finally {
+    boton.disabled = false;
+    if (spanTexto.textContent !== "No se pudo abrir") spanTexto.textContent = textoOriginal;
+  }
+}
+
 function decodificarListaB64(valor) {
   // valor es base64 de un JSON UTF-8 -atob() solo decodifica a Latin-1,
   // por eso hay que pasar los bytes por TextDecoder para no reventar tildes/ñ
@@ -1068,6 +1225,14 @@ btn.addEventListener("click", async () => {
     const blob = await respuesta.blob();
     enlaceDescarga.href = URL.createObjectURL(blob);
     enlaceDescarga.style.display = "flex";
+
+    // vista previa por archivo (RQ-13): se arma leyendo el mismo blob con
+    // JSZip, sin pedirle nada más al servidor
+    const listaPdfs = await construirListaPdfsDelZip(blob);
+    if (listaPdfs) {
+      resultado.appendChild(tituloSeccion("Archivos generados"));
+      resultado.appendChild(listaPdfs);
+    }
   } catch (error) {
     console.error("[resaltador] error de red:", error);
     mostrarMensaje(ICONS.error, "Error de conexión. Verifique su internet e intente de nuevo.", "error");

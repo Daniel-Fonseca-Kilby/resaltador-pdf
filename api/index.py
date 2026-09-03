@@ -22,6 +22,7 @@ from flask import Flask, jsonify, render_template, request, send_file
 from werkzeug.exceptions import HTTPException
 
 from resaltado_pdf import (
+    generar_excel_resumen,
     generar_pdf_resumen,
     resaltar_nombres_en_pdf,
     resaltar_por_cedula_y_exportar_por_cliente,
@@ -449,6 +450,12 @@ def _procesar_modo_cliente(registros: list[dict], archivos, formato: str, resalt
                     ],
                 )
                 zf.writestr("Resumen.pdf", resumen_pdf)
+
+            # resumen de facturación (2 pestañas: por cliente y detalle por
+            # oficial) para que Facturación no tenga que abrir cada PDF a
+            # contar oficiales a mano
+            resumen_excel = generar_excel_resumen(resultado["detalle_registros"])
+            zf.writestr("Resumen_Facturacion.xlsx", resumen_excel)
         buffer_zip.seek(0)
     finally:
         shutil.rmtree(carpeta_temporal, ignore_errors=True)

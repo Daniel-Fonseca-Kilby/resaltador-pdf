@@ -96,6 +96,24 @@ def test_procesar_modo_cliente_devuelve_zip(cliente_flask, ruta_pdf_ejemplo, reg
     assert respuesta.headers["X-Total-Clientes"] == "2"
 
 
+def test_procesar_modo_cliente_incluye_excel_de_facturacion(cliente_flask, ruta_pdf_ejemplo, registros_ejemplo):
+    datos = {
+        "excel": (_crear_excel_cliente(registros_ejemplo), "planilla.xlsx"),
+        "pdfs": (_abrir_pdf(ruta_pdf_ejemplo), "planilla.pdf"),
+        "formato": "mnk",
+    }
+
+    respuesta = cliente_flask.post("/api/procesar", data=datos, content_type="multipart/form-data")
+
+    assert respuesta.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(respuesta.data)) as zf:
+        assert "Resumen_Facturacion.xlsx" in zf.namelist()
+        with zf.open("Resumen_Facturacion.xlsx") as f:
+            libro = openpyxl.load_workbook(io.BytesIO(f.read()))
+
+    assert libro.sheetnames == ["Resumen por Cliente", "Detalle de Oficiales"]
+
+
 def test_procesar_modo_cliente_usa_columna_cliente_y_no_empresa(cliente_flask, ruta_pdf_ejemplo):
     # Reproduce un bug real: las planillas de VMA traen "Empresa" (unidad
     # interna, ej. "Comer") Y "CLIENTE" (a quién se factura, ej. "ADT") en

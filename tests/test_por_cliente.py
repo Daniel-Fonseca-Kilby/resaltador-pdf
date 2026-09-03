@@ -61,6 +61,24 @@ def test_reporta_cedulas_que_no_aparecen_en_el_pdf(ruta_pdf_ejemplo, registros_e
     assert cedulas_no_encontradas == {"999999999"}
 
 
+def test_detalle_registros_marca_encontrado_y_poliza_de_origen(ruta_pdf_ejemplo, registros_ejemplo, tmp_path):
+    carpeta_salida = tmp_path / "salida_por_cliente"
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [ruta_pdf_ejemplo], registros_ejemplo, str(carpeta_salida), formato="mnk"
+    )
+
+    detalle_por_cedula = {d["cedula"]: d for d in resultado["detalle_registros"]}
+
+    encontrado = detalle_por_cedula["111111111"]
+    assert encontrado["encontrado"] is True
+    assert encontrado["polizas"] == [Path(ruta_pdf_ejemplo).name]
+
+    no_encontrado = detalle_por_cedula["999999999"]
+    assert no_encontrado["encontrado"] is False
+    assert no_encontrado["polizas"] == []
+
+
 def test_no_reporta_errores_con_un_pdf_valido(ruta_pdf_ejemplo, registros_ejemplo, tmp_path):
     carpeta_salida = tmp_path / "salida_por_cliente"
 
