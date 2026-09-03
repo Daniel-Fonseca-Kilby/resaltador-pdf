@@ -209,7 +209,7 @@ def test_procesar_modo_cliente_con_csv_delimitado_por_comas(cliente_flask, ruta_
 def test_procesar_modo_cliente_con_csv_punto_y_coma_latin1(cliente_flask, ruta_pdf_ejemplo):
     # CSV con punto y coma y caracteres con tilde/ñ en Latin-1 (exportación típica de ERP)
     contenido_csv = (
-        "Cédula;Empresa;Colaborador\n"
+        "Cédula;Cuenta;Colaborador\n"
         "111111111;Cliente Prueba Uno;Juan Pérez\n"
     ).encode("latin-1")
 

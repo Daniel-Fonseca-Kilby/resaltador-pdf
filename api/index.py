@@ -177,11 +177,15 @@ def _combinar_nombres(texto_nombres: str, archivo_excel) -> list[str]:
 
 # sinónimos normalizados (sin tildes, mayúsculas) que puede traer cada columna
 # en orden de prioridad -el término más específico primero. Si el Excel
-# trae varias columnas que calzan (ej. "Empresa" Y "Cliente" a la vez, como
-# en las planillas de VMA), gana la de más arriba en la lista, sin importar
-# cuál columna esté más a la izquierda.
+# trae varias columnas que calzan, gana la de más arriba en la lista, sin
+# importar cuál columna esté más a la izquierda.
+#
+# "EMPRESA" NO es sinónimo de cliente a propósito: en las planillas reales
+# de VMA esa columna es una unidad interna (ej. "Comer", "Servicios") que
+# no tiene nada que ver con a quién se le factura -incluirla como sinónimo
+# separaba el zip por esa unidad interna en vez de por el cliente real.
 _SINONIMOS_CEDULA = ["IDENTIFICACION", "CEDULA", "ID", "DOCUMENTO", "IDENTIFICACION FISCAL", "NUMERO"]
-_SINONIMOS_CLIENTE = ["CLIENTE", "EMPRESA", "CUENTA", "PROYECTO", "PUESTO", "CONTRATO"]
+_SINONIMOS_CLIENTE = ["CLIENTE", "CUENTA", "PROYECTO", "PUESTO", "CONTRATO"]
 _SINONIMOS_NOMBRE = ["NOMBRE", "NOMBRES", "EMPLEADO", "COLABORADOR", "NOMBRE COMPLETO"]
 
 
