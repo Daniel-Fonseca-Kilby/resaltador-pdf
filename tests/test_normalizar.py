@@ -1,5 +1,5 @@
 """Pruebas de las utilidades de normalización de texto (no usan PDFs)."""
-from api.index import _extraer_cedula_limpia
+from api.index import _extraer_cedula_limpia, _indice_por_sinonimos
 from resaltado_pdf import (
     _coincide_cliente,
     _nombre_archivo_seguro,
@@ -79,6 +79,23 @@ def test_extraer_cedula_limpia_con_guiones():
 def test_extraer_cedula_limpia_valor_vacio():
     assert _extraer_cedula_limpia(None) == ""
     assert _extraer_cedula_limpia("") == ""
+
+
+def test_indice_por_sinonimos_prefiere_termino_mas_especifico():
+    # Las planillas reales de VMA traen "Empresa" (unidad interna) Y
+    # "Cliente" (a quién se factura) en el mismo Excel -"Empresa" está
+    # antes en las columnas, pero no debe ganar solo por eso.
+    encabezado = ["Empresa", "Identificacion", "Cliente"]
+    assert _indice_por_sinonimos(encabezado, ["CLIENTE", "EMPRESA"]) == 2
+
+
+def test_indice_por_sinonimos_usa_sinonimo_si_no_hay_termino_exacto():
+    encabezado = ["Identificacion", "Empresa"]
+    assert _indice_por_sinonimos(encabezado, ["CLIENTE", "EMPRESA"]) == 1
+
+
+def test_indice_por_sinonimos_sin_coincidencias():
+    assert _indice_por_sinonimos(["Fecha", "Monto"], ["CLIENTE", "EMPRESA"]) is None
 
 
 def test_nombre_archivo_seguro_limpia_caracteres_invalidos():

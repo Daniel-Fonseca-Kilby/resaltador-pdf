@@ -175,9 +175,13 @@ def _combinar_nombres(texto_nombres: str, archivo_excel) -> list[str]:
 
 
 # sinónimos normalizados (sin tildes, mayúsculas) que puede traer cada columna
-_SINONIMOS_CEDULA = {"IDENTIFICACION", "CEDULA", "ID", "DOCUMENTO", "IDENTIFICACION FISCAL", "NUMERO"}
-_SINONIMOS_CLIENTE = {"CLIENTE", "EMPRESA", "CUENTA", "PROYECTO", "PUESTO", "CONTRATO"}
-_SINONIMOS_NOMBRE = {"NOMBRE", "NOMBRES", "EMPLEADO", "COLABORADOR", "NOMBRE COMPLETO"}
+# en orden de prioridad -el término más específico primero. Si el Excel
+# trae varias columnas que calzan (ej. "Empresa" Y "Cliente" a la vez, como
+# en las planillas de VMA), gana la de más arriba en la lista, sin importar
+# cuál columna esté más a la izquierda.
+_SINONIMOS_CEDULA = ["IDENTIFICACION", "CEDULA", "ID", "DOCUMENTO", "IDENTIFICACION FISCAL", "NUMERO"]
+_SINONIMOS_CLIENTE = ["CLIENTE", "EMPRESA", "CUENTA", "PROYECTO", "PUESTO", "CONTRATO"]
+_SINONIMOS_NOMBRE = ["NOMBRE", "NOMBRES", "EMPLEADO", "COLABORADOR", "NOMBRE COMPLETO"]
 
 
 def _normalizar_encabezado(valor) -> str:
@@ -186,10 +190,16 @@ def _normalizar_encabezado(valor) -> str:
     return "".join(c for c in sin_tildes if not unicodedata.combining(c))
 
 
-def _indice_por_sinonimos(encabezado, sinonimos: set) -> int | None:
-    for i, valor in enumerate(encabezado):
-        if valor and _normalizar_encabezado(valor) in sinonimos:
-            return i
+def _indice_por_sinonimos(encabezado, sinonimos: list[str]) -> int | None:
+    """Recorre 'sinonimos' en orden de prioridad (no las columnas de
+    izquierda a derecha): si el encabezado trae más de una columna que
+    calza, gana la del sinónimo más específico -ej. 'Cliente' sobre
+    'Empresa', aunque 'Empresa' esté antes en el Excel."""
+    normalizados = [_normalizar_encabezado(valor) if valor else "" for valor in encabezado]
+    for sinonimo in sinonimos:
+        for i, valor in enumerate(normalizados):
+            if valor == sinonimo:
+                return i
     return None
 
 

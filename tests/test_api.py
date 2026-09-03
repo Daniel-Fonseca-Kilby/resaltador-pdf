@@ -96,6 +96,42 @@ def test_procesar_modo_cliente_devuelve_zip(cliente_flask, ruta_pdf_ejemplo, reg
     assert respuesta.headers["X-Total-Clientes"] == "2"
 
 
+def test_procesar_modo_cliente_usa_columna_cliente_y_no_empresa(cliente_flask, ruta_pdf_ejemplo):
+    # Reproduce un bug real: las planillas de VMA traen "Empresa" (unidad
+    # interna, ej. "Comer") Y "CLIENTE" (a quién se factura, ej. "ADT") en
+    # el mismo Excel -el sistema separaba por "Empresa" por estar primero
+    # en las columnas, en vez de por "CLIENTE".
+    libro = openpyxl.Workbook()
+    hoja = libro.active
+    hoja.append([
+        "Empresa", "Empleado", "Nombre", "Identificación", "Centro Costos",
+        "Descripción", "Alfa", "Puesto", "Ingreso", "CLIENTE",
+    ])
+    hoja.append([
+        "Comer", "1001", "Juan Perez Mora", "111111111", "CC1",
+        "Desc", "A", "Oficial", "2026-01-01", "ADT",
+    ])
+    buffer = io.BytesIO()
+    libro.save(buffer)
+    buffer.seek(0)
+
+    datos = {
+        "excel": (buffer, "planilla.xlsx"),
+        "pdfs": (_abrir_pdf(ruta_pdf_ejemplo), "planilla.pdf"),
+        "formato": "mnk",
+    }
+    respuesta = cliente_flask.post("/api/procesar", data=datos, content_type="multipart/form-data")
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["X-Modo"] == "cliente"
+
+    with zipfile.ZipFile(io.BytesIO(respuesta.data)) as zf:
+        nombres_pdf = [n for n in zf.namelist() if n.lower().endswith(".pdf")]
+
+    assert "ADT.pdf" in nombres_pdf
+    assert "Comer.pdf" not in nombres_pdf
+
+
 def test_procesar_modo_cliente_manda_no_encontrados_en_cabecera(cliente_flask, ruta_pdf_ejemplo, registros_ejemplo):
     # registros_ejemplo trae una cédula (999999999) que no está en el PDF
     datos = {
