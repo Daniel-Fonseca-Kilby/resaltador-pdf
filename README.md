@@ -5,10 +5,7 @@ nombres o cédulas, y genera copias resaltadas en amarillo — sin modificar
 el PDF original ni perder su encabezado o formato. Se usa desde el
 navegador, no requiere instalar nada en la computadora del usuario final.
 
-Desplegada en **Render** (ver `Procfile`). El proyecto vivió antes una
-versión de escritorio (Tkinter) para probar la idea rápido; ese enfoque
-se descartó a favor de la web por la comodidad de no tener que instalar
-Python ni dependencias en cada máquina.
+Desplegada en **Render** (ver `Procfile`).
 
 ## Modos de uso
 
@@ -56,9 +53,6 @@ al terminar de procesar.
   resaltado, recorte y armado de PDFs por cliente con PyMuPDF. Sin
   dependencias de Flask, para poder reutilizarlo o probarlo aparte.
 - `tests/` — pruebas automatizadas con pytest (ver sección de abajo).
-- `legacy/` — versión previa de escritorio en Tkinter (`main.py`,
-  `interfaz.py`), conservada solo como referencia histórica. Ya no es el
-  foco del proyecto ni se mantiene actualizada.
 - `Procfile` — comando de arranque para Render (`gunicorn`, con
   `--workers 1 --threads 4` para no bloquear a otros usuarios mientras se
   procesa una planilla pesada, dado que el plan de Render solo tiene 1 CPU).
