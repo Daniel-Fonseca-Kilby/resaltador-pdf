@@ -153,6 +153,47 @@ def test_encabezado_una_sola_vez_si_la_poliza_cabe_en_una_hoja(tmp_path):
         documento.close()
 
 
+def test_encabezado_sale_de_la_pagina_1_aunque_el_cliente_empiece_en_la_pagina_2(tmp_path):
+    """Reproduce un reporte real de varias páginas (ej. MNK): la página 1
+    trae el logo/título/fecha completos, las páginas siguientes solo
+    repiten la fila de títulos de columna, más arriba. Si el primer oficial
+    de un cliente aparece recién en la página 2, igual se debe llevar el
+    encabezado COMPLETO de la página 1 -no el recortado de su propia
+    página, que le faltaría el logo/título/fecha."""
+    documento = fitz.open()
+
+    # página 1: encabezado completo (letterhead) + una fila de otro cliente
+    pagina1 = documento.new_page(width=595, height=842)
+    pagina1.insert_text((36, 40), "REPORTE MNK - LETTERHEAD COMPLETO", fontsize=13)
+    pagina1.insert_text((36, 60), "Fecha: 01/01/2026", fontsize=10)
+    _escribir_fila(pagina1, 100, _TITULOS_COLUMNAS)
+    _escribir_fila(pagina1, 140, [("999999999", "OTRO", "CLIENTE VIEJO", "Ninguna")])
+
+    # página 2: sin letterhead, solo repite la fila de títulos más arriba
+    pagina2 = documento.new_page(width=595, height=842)
+    _escribir_fila(pagina2, 40, _TITULOS_COLUMNAS)
+    _escribir_fila(pagina2, 80, [("111111111", "JUAN", "PEREZ NUEVO", "Ninguna")])
+
+    ruta_poliza = tmp_path / "poliza_multipagina.pdf"
+    documento.save(str(ruta_poliza))
+    documento.close()
+
+    registros = [{"cedula": "111111111", "cliente": "Cliente Pagina Dos", "nombre": "Juan Perez"}]
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [str(ruta_poliza)], registros, str(tmp_path / "salida"), formato="mnk"
+    )
+
+    ruta_salida = resultado["archivos_por_cliente"]["Cliente Pagina Dos"]
+    documento_salida = fitz.open(ruta_salida)
+    try:
+        texto = documento_salida[0].get_text()
+        assert "REPORTE MNK - LETTERHEAD COMPLETO" in texto
+        assert "JUAN" in texto
+    finally:
+        documento_salida.close()
+
+
 def test_polizas_distintas_conservan_su_propio_encabezado(tmp_path):
     """Si el mismo cliente tiene oficiales en dos pólizas (archivos)
     distintas, cada una debe llegar en su propia hoja con su propio

@@ -252,7 +252,14 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     solo se lleva el encabezado una vez, pero si cambia de archivo (otra
     póliza) se fuerza una hoja de salida limpia con su propio encabezado.
     Y si esa póliza termina desbordando a una segunda hoja de salida, el
-    encabezado se repite ahí también para no perder el contexto."""
+    encabezado se repite ahí también para no perder el contexto.
+
+    Ese encabezado SIEMPRE se recorta de la página 1 del archivo, nunca de
+    la página donde arranca cada cliente: en reportes de varias páginas
+    (ej. MNK) solo la primera trae el logo/título/fecha completos, las
+    siguientes repiten nada más la fila de títulos de columna -si se usara
+    la página del cliente, uno que empieza en la página 2 se llevaría el
+    encabezado recortado."""
     # una entrada por cada par (cédula, cliente) único del Excel -si la
     # misma fila viene duplicada se conserva solo la primera aparición
     registros_unicos: dict[tuple[str, str], dict] = {}
@@ -336,12 +343,18 @@ def resaltar_por_cedula_y_exportar_por_cliente(
             )
             continue
 
+        # encabezado de la póliza: SIEMPRE se saca de la página 1 del archivo,
+        # no de la página donde arranca cada cliente -en reportes de varias
+        # páginas (ej. MNK) solo la primera trae el logo/título/fecha
+        # completos, las siguientes repiten nada más la fila de títulos de
+        # columna. Se calcula una sola vez por archivo (no por cliente).
+        encabezado_archivo = None
+        encabezado_calculado = False
+
         try:
             for pagina in documento:
                 textpage = pagina.get_textpage()
                 palabras = pagina.get_text("words", textpage=textpage)
-                techo_datos = None
-                techo_calculado = False
 
                 franjas_vistas: dict[str, list] = {}
                 for x0, y0, x1, y1, palabra, *_resto in palabras:
@@ -375,24 +388,26 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                             # nueva póliza para este cliente -hoja limpia y encabezado propio
                             # (si el cliente ya venía de otro archivo se repite este mismo
                             # bloque de encabezado en cada hoja que la póliza necesite)
-                            if not techo_calculado:
-                                techo_datos = _techo_de_datos(pagina, formato, textpage=textpage)
-                                techo_calculado = True
+                            if not encabezado_calculado:
+                                primera_pagina = documento[0]
+                                techo_pagina1 = _techo_de_datos(primera_pagina, formato)
+                                if techo_pagina1 is not None and techo_pagina1 > 4:
+                                    encabezado_archivo = {
+                                        "documento": documento,
+                                        "pagina": primera_pagina,
+                                        "franja": fitz.Rect(
+                                            primera_pagina.rect.x0, 0, primera_pagina.rect.x1, techo_pagina1 - 2
+                                        ),
+                                    }
+                                encabezado_calculado = True
                             estado["pagina"] = None
                             estado["archivo_actual"] = ruta_pdf
-                            if techo_datos is not None and techo_datos > 4:
-                                franja_encabezado = fitz.Rect(pagina.rect.x0, 0, pagina.rect.x1, techo_datos - 2)
-                                estado["encabezado_actual"] = {
-                                    "documento": documento,
-                                    "pagina": pagina,
-                                    "franja": franja_encabezado,
-                                }
+                            estado["encabezado_actual"] = encabezado_archivo
+                            if encabezado_archivo is not None:
                                 _agregar_bloque(
-                                    estado, documento, pagina, franja_encabezado,
-                                    resaltar=False, repetir_encabezado=False,
+                                    estado, encabezado_archivo["documento"], encabezado_archivo["pagina"],
+                                    encabezado_archivo["franja"], resaltar=False, repetir_encabezado=False,
                                 )
-                            else:
-                                estado["encabezado_actual"] = None
 
                         _agregar_bloque(estado, documento, pagina, franja, resaltar=resaltar_filas)
         except Exception as error:
