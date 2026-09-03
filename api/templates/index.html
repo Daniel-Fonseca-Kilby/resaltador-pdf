@@ -53,7 +53,20 @@
     gap: 10px;
   }
 
-  header svg.logo { flex-shrink: 0; }
+  .logo-insignia {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    background: #fff;
+    border-radius: 6px;
+    padding: 4px 8px;
+  }
+
+  .logo-insignia img {
+    display: block;
+    height: 28px;
+    width: auto;
+  }
 
   .header-texto h1 {
     font-size: 16px;
@@ -565,12 +578,9 @@
 <body>
   <header>
     <div class="header-interior">
-      <svg class="logo" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M12 2L4 5V11C4 16.5 7.4 20.7 12 22C16.6 20.7 20 16.5 20 11V5L12 2Z"
-              fill="#c9a34e" stroke="#fff" stroke-width="0.6"/>
-        <path d="M9.5 12.2L11.3 14L14.8 10" stroke="#0a1f3d" stroke-width="1.6"
-              stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
+      <span class="logo-insignia">
+        <img src="{{ url_for('static', filename='logo-vma.png') }}" alt="VMA Grupo">
+      </span>
       <div class="header-texto">
         <h1>VMA Seguridad</h1>
         <p>Resaltador de Planillas en PDF</p>
