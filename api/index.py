@@ -185,7 +185,7 @@ def _combinar_nombres(texto_nombres: str, archivo_excel) -> list[str]:
 # no tiene nada que ver con a quién se le factura -incluirla como sinónimo
 # separaba el zip por esa unidad interna en vez de por el cliente real.
 _SINONIMOS_CEDULA = ["IDENTIFICACION", "CEDULA", "ID", "DOCUMENTO", "IDENTIFICACION FISCAL", "NUMERO"]
-_SINONIMOS_CLIENTE = ["CLIENTE", "CUENTA", "PROYECTO", "PUESTO", "CONTRATO"]
+_SINONIMOS_CLIENTE = ["CLIENTE", "CUENTA"]
 _SINONIMOS_NOMBRE = ["NOMBRE", "NOMBRES", "EMPLEADO", "COLABORADOR", "NOMBRE COMPLETO"]
 
 
