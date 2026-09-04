@@ -89,6 +89,91 @@ def test_no_reporta_errores_con_un_pdf_valido(ruta_pdf_ejemplo, registros_ejempl
     assert resultado["errores_por_archivo"] == {}
 
 
+def test_segunda_pasada_rescata_por_nombre_si_la_cedula_no_calza(tmp_path):
+    """Si el Excel trae un identificador que no aparece en el PDF (ej. un
+    DIMEX en vez del número que imprime la CCSS para esa persona), pero el
+    nombre completo sí aparece en una sola fila de todo el lote, se rescata
+    por nombre en la segunda pasada."""
+    ruta_poliza = tmp_path / "poliza.pdf"
+    _crear_pdf_planilla(
+        ruta_poliza,
+        "EMPRESA AUTOSTAR",
+        filas_por_pagina=[[("716322536", "ROBERTO", "REYES RODRIGUEZ", "Ninguna")]],
+    )
+    registros = [
+        {"cedula": "155802367909", "cliente": "AUTOSTAR", "nombre": "Roberto Reyes Rodriguez"},
+    ]
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [str(ruta_poliza)], registros, str(tmp_path / "salida"), formato="mnk"
+    )
+
+    assert resultado["no_encontrados"] == []
+    assert "AUTOSTAR" in resultado["archivos_por_cliente"]
+
+    detalle = resultado["detalle_registros"][0]
+    assert detalle["encontrado"] is True
+    assert detalle["encontrado_por"] == "nombre"
+
+    documento = fitz.open(resultado["archivos_por_cliente"]["AUTOSTAR"])
+    try:
+        assert "REYES" in documento[0].get_text()
+    finally:
+        documento.close()
+
+
+def test_segunda_pasada_no_rescata_si_el_nombre_es_ambiguo(tmp_path):
+    """Si el nombre completo aparece en más de una fila del lote, no se
+    arriesga a adivinar cuál es la persona correcta -mejor dejarla como
+    no encontrada que asignarla mal."""
+    ruta_poliza = tmp_path / "poliza.pdf"
+    _crear_pdf_planilla(
+        ruta_poliza,
+        "EMPRESA AMBIGUA",
+        filas_por_pagina=[[
+            ("111111111", "JUAN", "PEREZ MORA", "Ninguna"),
+            ("222222222", "JUAN", "PEREZ MORA", "Ninguna"),
+        ]],
+    )
+    registros = [
+        {"cedula": "999999999", "cliente": "Cliente Ambiguo", "nombre": "Juan Perez Mora"},
+    ]
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [str(ruta_poliza)], registros, str(tmp_path / "salida"), formato="mnk"
+    )
+
+    assert len(resultado["no_encontrados"]) == 1
+    assert resultado["detalle_registros"][0]["encontrado"] is False
+    assert resultado["archivos_por_cliente"] == {}
+
+
+def test_segunda_pasada_no_le_roba_la_fila_a_otro_empleado_conocido(tmp_path):
+    """Si la fila que calza por nombre ya tiene una cédula que pertenece a
+    OTRO empleado ya registrado en el Excel, no se la asigna -evita
+    confundir a dos personas que solo comparten nombre."""
+    ruta_poliza = tmp_path / "poliza.pdf"
+    _crear_pdf_planilla(
+        ruta_poliza,
+        "EMPRESA DUPLICADA",
+        filas_por_pagina=[[("111111111", "JUAN", "PEREZ MORA", "Ninguna")]],
+    )
+    registros = [
+        {"cedula": "111111111", "cliente": "Cliente Correcto", "nombre": "Juan Perez Mora"},
+        {"cedula": "999999999", "cliente": "Cliente Equivocado", "nombre": "Juan Perez Mora"},
+    ]
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [str(ruta_poliza)], registros, str(tmp_path / "salida"), formato="mnk"
+    )
+
+    assert "Cliente Correcto" in resultado["archivos_por_cliente"]
+    assert "Cliente Equivocado" not in resultado["archivos_por_cliente"]
+
+    no_encontrados_clientes = {r["cliente"] for r in resultado["no_encontrados"]}
+    assert no_encontrados_clientes == {"Cliente Equivocado"}
+
+
 def test_pdf_con_contrasena_se_reporta_como_error_sin_tumbar_el_proceso(tmp_path):
     documento = fitz.open()
     documento.new_page()

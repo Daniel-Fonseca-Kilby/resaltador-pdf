@@ -259,7 +259,14 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     (ej. MNK) solo la primera trae el logo/título/fecha completos, las
     siguientes repiten nada más la fila de títulos de columna -si se usara
     la página del cliente, uno que empieza en la página 2 se llevaría el
-    encabezado recortado."""
+    encabezado recortado.
+
+    Segunda pasada, solo por nombre: los registros que no calzaron por
+    cédula se vuelven a intentar buscando su nombre completo (rescata,
+    ej., cuando el Excel trae un DIMEX pero la planilla imprime el número
+    de CCSS de esa persona). Solo se acepta si el nombre aparece en
+    exactamente una fila de todo el lote y esa fila no es ya de otro
+    empleado conocido -si no, se deja como no encontrado."""
     # una entrada por cada par (cédula, cliente) único del Excel -si la
     # misma fila viene duplicada se conserva solo la primera aparición
     registros_unicos: dict[tuple[str, str], dict] = {}
@@ -415,6 +422,116 @@ def resaltar_por_cedula_y_exportar_por_cliente(
         finally:
             documento.close()
 
+    # segunda pasada, solo por nombre: para los que no calzaron por cédula
+    # en la primera pasada (ej. el Excel trae un DIMEX pero la planilla
+    # imprime el número de CCSS de esa persona). Es más arriesgada que
+    # buscar por cédula -nombres repetidos, coincidencias parciales-, así
+    # que se aplica con baranda: solo cuenta si el nombre completo aparece
+    # en EXACTAMENTE una fila de todo el lote, y esa fila no tiene ya una
+    # cédula que pertenezca a otro empleado del Excel (no le "roba" la fila
+    # a otra persona que solo comparte nombre).
+    encontrados_por_nombre: set = set()
+    pendientes_por_nombre: dict[tuple[str, str], list[str]] = {}
+    for clave, datos in registros_unicos.items():
+        if polizas_encontradas.get(clave):
+            continue
+        palabras_nombre = [p for p in _normalizar(datos.get("nombre") or "").split() if len(p) >= 3]
+        if len(palabras_nombre) >= 2:
+            pendientes_por_nombre[clave] = palabras_nombre
+
+    if pendientes_por_nombre:
+        candidatos_por_pendiente: dict[tuple[str, str], list[tuple[str, int, tuple]]] = {}
+        for ruta_pdf in rutas_pdfs:
+            try:
+                documento = fitz.open(ruta_pdf)
+            except Exception:
+                continue
+            if documento.is_encrypted:
+                documento.close()
+                continue
+            try:
+                for pagina in documento:
+                    textpage = pagina.get_textpage()
+                    palabras_pagina = pagina.get_text("words", textpage=textpage)
+                    for clave, palabras_nombre in pendientes_por_nombre.items():
+                        for fila_rects in _buscar_por_fila(pagina, palabras_nombre, textpage=textpage):
+                            fila_y0 = min(r.y0 for r in fila_rects)
+                            fila_y1 = max(r.y1 for r in fila_rects)
+
+                            # ¿esta fila ya tiene su propia cédula, de otro
+                            # empleado conocido del Excel? si es así, no es
+                            # esta persona -aunque el nombre haya calzado
+                            cedula_de_la_fila = None
+                            for wx0, wy0, wx1, wy1, wpalabra, *_resto in palabras_pagina:
+                                if abs(wy0 - fila_y0) > _TOLERANCIA_FILA:
+                                    continue
+                                wdigitos = "".join(c for c in wpalabra if c.isdigit())
+                                if not wdigitos:
+                                    continue
+                                wclave_cedula = _normalizar_cedula(wdigitos)
+                                if wclave_cedula not in mapa_cedulas and len(wdigitos) > 1:
+                                    wclave_cedula = _normalizar_cedula(wdigitos[1:])
+                                if wclave_cedula in mapa_cedulas:
+                                    cedula_de_la_fila = wclave_cedula
+                                    break
+                            if cedula_de_la_fila is not None and cedula_de_la_fila != clave[0]:
+                                continue
+
+                            franja = fitz.Rect(pagina.rect.x0, fila_y0 - 2, pagina.rect.x1, fila_y1 + 2)
+                            candidatos_por_pendiente.setdefault(clave, []).append(
+                                (ruta_pdf, pagina.number, (franja.x0, franja.y0, franja.x1, franja.y1))
+                            )
+            except Exception:
+                pass
+            finally:
+                documento.close()
+
+        for clave, candidatos in candidatos_por_pendiente.items():
+            if len(candidatos) != 1:
+                continue  # ninguna fila, o ambiguo entre varias -no se arriesga
+            ruta_pdf_ganador, numero_pagina, coords = candidatos[0]
+            cliente = clave[1]
+            franja = fitz.Rect(*coords)
+
+            try:
+                documento_ganador = fitz.open(ruta_pdf_ganador)
+            except Exception:
+                continue
+            try:
+                pagina_ganadora = documento_ganador[numero_pagina]
+                estado = _obtener_estado(cliente, pagina_ganadora)
+
+                primera_pagina_ganadora = documento_ganador[0]
+                techo_ganador = _techo_de_datos(primera_pagina_ganadora, formato)
+                encabezado_ganador = None
+                if techo_ganador is not None and techo_ganador > 4:
+                    encabezado_ganador = {
+                        "documento": documento_ganador,
+                        "pagina": primera_pagina_ganadora,
+                        "franja": fitz.Rect(
+                            primera_pagina_ganadora.rect.x0, 0, primera_pagina_ganadora.rect.x1, techo_ganador - 2
+                        ),
+                    }
+                # se refresca siempre (con este documento, todavía abierto)
+                # para no dejar una referencia muerta de un archivo ya cerrado
+                estado["encabezado_actual"] = encabezado_ganador
+
+                if estado["archivo_actual"] != ruta_pdf_ganador:
+                    estado["pagina"] = None
+                    estado["archivo_actual"] = ruta_pdf_ganador
+                    if encabezado_ganador is not None:
+                        _agregar_bloque(
+                            estado, encabezado_ganador["documento"], encabezado_ganador["pagina"],
+                            encabezado_ganador["franja"], resaltar=False, repetir_encabezado=False,
+                        )
+
+                _agregar_bloque(estado, documento_ganador, pagina_ganadora, franja, resaltar=resaltar_filas)
+
+                polizas_encontradas.setdefault(clave, set()).add(Path(ruta_pdf_ganador).name)
+                encontrados_por_nombre.add(clave)
+            finally:
+                documento_ganador.close()
+
     carpeta = Path(carpeta_salida)
     carpeta.mkdir(parents=True, exist_ok=True)
     archivos_por_cliente = {}
@@ -425,14 +542,19 @@ def resaltar_por_cedula_y_exportar_por_cliente(
         archivos_por_cliente[cliente] = str(ruta)
 
     detalle_registros = []
-    for (clave_cedula, cliente), datos in registros_unicos.items():
-        polizas = sorted(polizas_encontradas.get((clave_cedula, cliente), set()))
+    for clave, datos in registros_unicos.items():
+        cliente = clave[1]
+        polizas = sorted(polizas_encontradas.get(clave, set()))
+        encontrado = bool(polizas)
         detalle_registros.append({
             "cedula": datos["cedula"],
             "nombre": datos["nombre"],
             "cliente": cliente,
             "polizas": polizas,
-            "encontrado": bool(polizas),
+            "encontrado": encontrado,
+            # "cedula": calzó por número; "nombre": rescatado en la segunda
+            # pasada (más incierto -conviene revisarlo); None: no encontrado
+            "encontrado_por": ("nombre" if clave in encontrados_por_nombre else "cedula") if encontrado else None,
         })
 
     no_encontrados = [
@@ -515,8 +637,9 @@ def generar_excel_resumen(detalle_registros: list[dict]) -> bytes:
     'detalle_registros' es la lista que devuelve
     resaltar_por_cedula_y_exportar_por_cliente bajo la llave del mismo
     nombre: un dict por cada (cédula, cliente) único del Excel, con
-    'cedula', 'nombre', 'cliente', 'polizas' (archivos donde se encontró)
-    y 'encontrado'.
+    'cedula', 'nombre', 'cliente', 'polizas' (archivos donde se encontró),
+    'encontrado' y 'encontrado_por' ("cedula", "nombre" o None -"nombre"
+    significa que se rescató en la segunda pasada y conviene revisarlo).
 
     Pestaña 1 ('Resumen por Cliente'): una fila por cliente con el total
     de oficiales listos para cobrar, cuántos faltan y en qué pólizas
@@ -567,12 +690,18 @@ def generar_excel_resumen(detalle_registros: list[dict]) -> bytes:
         "Cédula", "Nombre Completo", "Cliente Asignado", "Póliza / Archivo de Origen", "¿Aparece en Planilla?",
     ])
     for d in sorted(detalle_registros, key=lambda d: (d["cliente"], d["cedula"])):
+        if d.get("encontrado_por") == "nombre":
+            estado_fila = "✅ Sí (por nombre -revisar)"
+        elif d["encontrado"]:
+            estado_fila = "✅ Sí"
+        else:
+            estado_fila = "❌ No encontrado"
         hoja_detalle.append([
             d["cedula"],
             d["nombre"] or "—",
             d["cliente"],
             ", ".join(d["polizas"]) if d["polizas"] else "(Ninguno)",
-            "✅ Sí" if d["encontrado"] else "❌ No encontrado",
+            estado_fila,
         ])
     _bordear_filas_excel(hoja_detalle)
     _autoajustar_columnas_excel(hoja_detalle)
