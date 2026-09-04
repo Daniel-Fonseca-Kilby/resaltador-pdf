@@ -279,6 +279,60 @@ def test_encabezado_sale_de_la_pagina_1_aunque_el_cliente_empiece_en_la_pagina_2
         documento_salida.close()
 
 
+def test_pie_de_pagina_con_total_se_agrega_al_final_del_documento(tmp_path):
+    """El pie de página con el total (tal cual viene en el original, ver
+    _PERFILES_PIE_PAGINA) se agrega al final del PDF de cada cliente."""
+    ruta_poliza = tmp_path / "poliza_con_total.pdf"
+    documento = fitz.open()
+    pagina = documento.new_page(width=595, height=842)
+    pagina.insert_text((36, 40), "EMPRESA CON TOTAL", fontsize=13)
+    _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
+    _escribir_fila(pagina, 140, [("111111111", "JUAN", "PEREZ MORA", "Ninguna")])
+    pagina.insert_text((36, 700), "TOTAL DE TRABAJADORES 1", fontsize=10)
+    pagina.insert_text((36, 720), "TOTAL DE SALARIO 405,710.71", fontsize=10)
+    documento.save(str(ruta_poliza))
+    documento.close()
+
+    registros = [{"cedula": "111111111", "cliente": "Cliente Con Total", "nombre": "Juan Perez"}]
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [str(ruta_poliza)], registros, str(tmp_path / "salida"), formato="mnk"
+    )
+
+    documento_salida = fitz.open(resultado["archivos_por_cliente"]["Cliente Con Total"])
+    try:
+        texto_completo = "".join(p.get_text() for p in documento_salida)
+        assert "TOTAL DE TRABAJADORES" in texto_completo
+        assert "TOTAL DE SALARIO" in texto_completo
+    finally:
+        documento_salida.close()
+
+
+def test_pie_de_pagina_no_se_agrega_si_el_formato_no_tiene_perfil_conocido(tmp_path):
+    """Si el formato no tiene un perfil de pie de página conocido (ej.
+    INS), no se agrega nada -mejor omitirlo que recortar cualquier cosa."""
+    ruta_poliza = tmp_path / "poliza_sin_perfil.pdf"
+    documento = fitz.open()
+    pagina = documento.new_page(width=595, height=842)
+    pagina.insert_text((36, 40), "EMPRESA SIN PERFIL", fontsize=13)
+    _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
+    _escribir_fila(pagina, 140, [("111111111", "JUAN", "PEREZ MORA", "Ninguna")])
+    documento.save(str(ruta_poliza))
+    documento.close()
+
+    registros = [{"cedula": "111111111", "cliente": "Cliente Sin Perfil", "nombre": "Juan Perez"}]
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [str(ruta_poliza)], registros, str(tmp_path / "salida"), formato="ins"
+    )
+
+    documento_salida = fitz.open(resultado["archivos_por_cliente"]["Cliente Sin Perfil"])
+    try:
+        assert documento_salida.page_count == 1
+    finally:
+        documento_salida.close()
+
+
 def test_polizas_distintas_conservan_su_propio_encabezado(tmp_path):
     """Si el mismo cliente tiene oficiales en dos pólizas (archivos)
     distintas, cada una debe llegar en su propia hoja con su propio

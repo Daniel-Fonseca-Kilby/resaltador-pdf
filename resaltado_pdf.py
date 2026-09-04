@@ -222,6 +222,51 @@ def _techo_de_datos(pagina, formato: str = "auto", textpage=None) -> float | Non
     return None
 
 
+# frases que solo salen en la fila del total, al final de cada póliza
+_PERFILES_PIE_PAGINA = {
+    "mnk": ["TOTAL DE TRABAJADORES", "TOTAL DE SALARIO"],
+    "ccss": ["TOTAL SALARIOS"],
+}
+
+
+def _piso_por_anclas(pagina, anclas: list[str], textpage=None) -> float | None:
+    """Y justo encima de la fila donde aparecen las anclas del total, con
+    margen -para recortar el pie de página completo hacia abajo desde ahí."""
+    y0_minimo = None
+    for ancla in anclas:
+        coincidencias = pagina.search_for(ancla, quads=False, textpage=textpage)
+        if not coincidencias:
+            coincidencias = pagina.search_for(_normalizar(ancla), quads=False, textpage=textpage)
+        for rect in coincidencias:
+            if y0_minimo is None or rect.y0 < y0_minimo:
+                y0_minimo = rect.y0
+    if y0_minimo is None:
+        return None
+    return y0_minimo - 6
+
+
+def _piso_de_datos(pagina, formato: str = "auto", textpage=None) -> float | None:
+    """Y donde empieza el pie de página con el total (para recortarlo hacia
+    abajo hasta el borde de la hoja). Es la contraparte de _techo_de_datos,
+    pero para el final de la póliza en vez del principio: se busca en la
+    ÚLTIMA página del archivo. Si el formato no trae un perfil de pie de
+    página conocido (ej. INS), no se agrega nada -mejor omitirlo que
+    arriesgarse a recortar cualquier cosa."""
+    perfiles_a_probar = []
+    anclas_formato = _PERFILES_PIE_PAGINA.get(formato)
+    if anclas_formato:
+        perfiles_a_probar.append(anclas_formato)
+    for anclas_perfil in _PERFILES_PIE_PAGINA.values():
+        if anclas_perfil not in perfiles_a_probar:
+            perfiles_a_probar.append(anclas_perfil)
+
+    for anclas in perfiles_a_probar:
+        piso = _piso_por_anclas(pagina, anclas, textpage=textpage)
+        if piso is not None:
+            return piso
+    return None
+
+
 _MARGEN_PAGINA = 24  # puntos de margen arriba/abajo en cada página de salida
 _ESPACIO_ENTRE_FILAS = 3  # separación vertical entre filas apiladas
 
@@ -266,7 +311,14 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     ej., cuando el Excel trae un DIMEX pero la planilla imprime el número
     de CCSS de esa persona). Solo se acepta si el nombre aparece en
     exactamente una fila de todo el lote y esa fila no es ya de otro
-    empleado conocido -si no, se deja como no encontrado."""
+    empleado conocido -si no, se deja como no encontrado.
+
+    Al final del documento de cada cliente se agrega, una vez por cada
+    póliza distinta que haya usado, el pie de página con el total tal cual
+    viene en el original (ver _PERFILES_PIE_PAGINA / _piso_de_datos) -es
+    el total de TODA la póliza, no solo de este cliente, pero así lo pide
+    VMA: que se vea igual que el documento fuente. Si el formato no tiene
+    un perfil de pie de página conocido, no se agrega nada."""
     # una entrada por cada par (cédula, cliente) único del Excel -si la
     # misma fila viene duplicada se conserva solo la primera aparición
     registros_unicos: dict[tuple[str, str], dict] = {}
@@ -531,6 +583,45 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 encontrados_por_nombre.add(clave)
             finally:
                 documento_ganador.close()
+
+    # pie de página con el total: se agrega al final del documento de cada
+    # cliente, una vez por cada póliza distinta que haya usado -tal cual
+    # sale en el original (el total es de TODA la póliza, no solo de este
+    # cliente, pero es el mismo pie de página que trae el documento fuente)
+    nombre_a_ruta = {Path(ruta).name: ruta for ruta in rutas_pdfs}
+    polizas_por_cliente: dict[str, list[str]] = {}
+    for clave in registros_unicos:
+        cliente = clave[1]
+        for nombre_poliza in polizas_encontradas.get(clave, ()):
+            lista = polizas_por_cliente.setdefault(cliente, [])
+            if nombre_poliza not in lista:
+                lista.append(nombre_poliza)
+
+    for cliente, nombres_poliza in polizas_por_cliente.items():
+        estado = estado_por_cliente.get(cliente)
+        if estado is None:
+            continue
+        for nombre_poliza in nombres_poliza:
+            ruta_poliza = nombre_a_ruta.get(nombre_poliza)
+            if not ruta_poliza:
+                continue
+            try:
+                documento_pie = fitz.open(ruta_poliza)
+            except Exception:
+                continue
+            try:
+                if documento_pie.is_encrypted:
+                    continue
+                ultima_pagina = documento_pie[-1]
+                piso = _piso_de_datos(ultima_pagina, formato)
+                if piso is None:
+                    continue
+                franja_pie = fitz.Rect(ultima_pagina.rect.x0, piso, ultima_pagina.rect.x1, ultima_pagina.rect.height)
+                _agregar_bloque(estado, documento_pie, ultima_pagina, franja_pie, resaltar=False, repetir_encabezado=False)
+            except Exception:
+                pass
+            finally:
+                documento_pie.close()
 
     carpeta = Path(carpeta_salida)
     carpeta.mkdir(parents=True, exist_ok=True)
