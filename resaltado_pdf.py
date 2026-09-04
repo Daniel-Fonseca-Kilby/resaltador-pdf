@@ -318,7 +318,14 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     viene en el original (ver _PERFILES_PIE_PAGINA / _piso_de_datos) -es
     el total de TODA la póliza, no solo de este cliente, pero así lo pide
     VMA: que se vea igual que el documento fuente. Si el formato no tiene
-    un perfil de pie de página conocido, no se agrega nada."""
+    un perfil de pie de página conocido, no se agrega nada.
+
+    Ese pie de página se copia como IMAGEN (renderizado), no con el mismo
+    show_pdf_page vectorial que se usa para el encabezado y las filas: el
+    total de algunos formatos (ej. CCSS) lo rellena la Oficina Virtual
+    como un campo de formulario, no como texto de la página, y
+    show_pdf_page no arrastra el valor de esos campos -solo una captura
+    visual sí."""
     # una entrada por cada par (cédula, cliente) único del Excel -si la
     # misma fila viene duplicada se conserva solo la primera aparición
     registros_unicos: dict[tuple[str, str], dict] = {}
@@ -363,6 +370,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
         franja: "fitz.Rect",
         resaltar: bool,
         repetir_encabezado: bool = True,
+        como_imagen: bool = False,
     ) -> None:
         escala = estado["ancho"] / pagina_origen.rect.width
         alto_bloque = franja.height * escala
@@ -381,7 +389,16 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 )
 
         destino = fitz.Rect(0, estado["y"], estado["ancho"], estado["y"] + alto_bloque)
-        estado["pagina"].show_pdf_page(destino, documento_origen, pagina_origen.number, clip=franja)
+        if como_imagen:
+            # copia vectorial (show_pdf_page) no arrastra el valor de los
+            # campos de formulario (ej. el total de CCSS, que la Oficina
+            # Virtual rellena como widget, no como texto de la página) -acá
+            # se renderiza esa franja como imagen para llevarse tal cual se
+            # ve, con cualquier campo relleno incluido
+            pixmap = pagina_origen.get_pixmap(clip=franja, matrix=fitz.Matrix(2, 2))
+            estado["pagina"].insert_image(destino, pixmap=pixmap)
+        else:
+            estado["pagina"].show_pdf_page(destino, documento_origen, pagina_origen.number, clip=franja)
         if resaltar:
             anotacion = estado["pagina"].add_highlight_annot(destino)
             anotacion.update()
@@ -617,7 +634,10 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 if piso is None:
                     continue
                 franja_pie = fitz.Rect(ultima_pagina.rect.x0, piso, ultima_pagina.rect.x1, ultima_pagina.rect.height)
-                _agregar_bloque(estado, documento_pie, ultima_pagina, franja_pie, resaltar=False, repetir_encabezado=False)
+                _agregar_bloque(
+                    estado, documento_pie, ultima_pagina, franja_pie,
+                    resaltar=False, repetir_encabezado=False, como_imagen=True,
+                )
             except Exception:
                 pass
             finally:

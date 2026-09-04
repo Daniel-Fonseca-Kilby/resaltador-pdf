@@ -281,7 +281,12 @@ def test_encabezado_sale_de_la_pagina_1_aunque_el_cliente_empiece_en_la_pagina_2
 
 def test_pie_de_pagina_con_total_se_agrega_al_final_del_documento(tmp_path):
     """El pie de página con el total (tal cual viene en el original, ver
-    _PERFILES_PIE_PAGINA) se agrega al final del PDF de cada cliente."""
+    _PERFILES_PIE_PAGINA) se agrega al final del PDF de cada cliente -como
+    imagen, no como copia vectorial: así se lleva también el valor de
+    campos de formulario (ej. el total real de CCSS, que la Oficina
+    Virtual rellena como widget en vez de como texto de la página), que
+    show_pdf_page no arrastra. Por eso se verifica que se insertó una
+    imagen, no que el texto se pueda extraer."""
     ruta_poliza = tmp_path / "poliza_con_total.pdf"
     documento = fitz.open()
     pagina = documento.new_page(width=595, height=842)
@@ -301,9 +306,8 @@ def test_pie_de_pagina_con_total_se_agrega_al_final_del_documento(tmp_path):
 
     documento_salida = fitz.open(resultado["archivos_por_cliente"]["Cliente Con Total"])
     try:
-        texto_completo = "".join(p.get_text() for p in documento_salida)
-        assert "TOTAL DE TRABAJADORES" in texto_completo
-        assert "TOTAL DE SALARIO" in texto_completo
+        total_imagenes = sum(len(pagina.get_images(full=True)) for pagina in documento_salida)
+        assert total_imagenes >= 1
     finally:
         documento_salida.close()
 
