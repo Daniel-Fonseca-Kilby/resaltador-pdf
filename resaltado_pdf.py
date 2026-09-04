@@ -229,10 +229,15 @@ _PERFILES_PIE_PAGINA = {
 }
 
 
-def _piso_por_anclas(pagina, anclas: list[str], textpage=None) -> float | None:
-    """Y justo encima de la fila donde aparecen las anclas del total, con
-    margen -para recortar el pie de página completo hacia abajo desde ahí."""
+_MARGEN_FRANJA_PIE = 28  # puntos debajo del renglón del total -para incluir la caja del valor sin arrastrar el resto de la página vacía
+
+
+def _franja_pie_por_anclas(pagina, anclas: list[str], textpage=None) -> tuple[float, float] | None:
+    """(y0, y1) del renglón donde aparecen las anclas del total, con
+    margen -para recortar SOLO esa fila (con su caja de valor), no toda
+    la página hacia abajo hasta el borde."""
     y0_minimo = None
+    y1_maximo = None
     for ancla in anclas:
         coincidencias = pagina.search_for(ancla, quads=False, textpage=textpage)
         if not coincidencias:
@@ -240,14 +245,16 @@ def _piso_por_anclas(pagina, anclas: list[str], textpage=None) -> float | None:
         for rect in coincidencias:
             if y0_minimo is None or rect.y0 < y0_minimo:
                 y0_minimo = rect.y0
+            if y1_maximo is None or rect.y1 > y1_maximo:
+                y1_maximo = rect.y1
     if y0_minimo is None:
         return None
-    return y0_minimo - 6
+    return (y0_minimo - 6, y1_maximo + _MARGEN_FRANJA_PIE)
 
 
-def _piso_de_datos(pagina, formato: str = "auto", textpage=None) -> float | None:
-    """Y donde empieza el pie de página con el total (para recortarlo hacia
-    abajo hasta el borde de la hoja). Es la contraparte de _techo_de_datos,
+def _franja_pie_de_pagina(pagina, formato: str = "auto", textpage=None) -> tuple[float, float] | None:
+    """(y0, y1) del renglón del pie de página con el total -no toda la
+    página vacía hasta el borde. Es la contraparte de _techo_de_datos,
     pero para el final de la póliza en vez del principio: se busca en la
     ÚLTIMA página del archivo. Si el formato no trae un perfil de pie de
     página conocido (ej. INS), no se agrega nada -mejor omitirlo que
@@ -261,9 +268,9 @@ def _piso_de_datos(pagina, formato: str = "auto", textpage=None) -> float | None
             perfiles_a_probar.append(anclas_perfil)
 
     for anclas in perfiles_a_probar:
-        piso = _piso_por_anclas(pagina, anclas, textpage=textpage)
-        if piso is not None:
-            return piso
+        franja = _franja_pie_por_anclas(pagina, anclas, textpage=textpage)
+        if franja is not None:
+            return franja
     return None
 
 
@@ -314,11 +321,12 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     empleado conocido -si no, se deja como no encontrado.
 
     Al final del documento de cada cliente se agrega, una vez por cada
-    póliza distinta que haya usado, el pie de página con el total tal cual
-    viene en el original (ver _PERFILES_PIE_PAGINA / _piso_de_datos) -es
-    el total de TODA la póliza, no solo de este cliente, pero así lo pide
-    VMA: que se vea igual que el documento fuente. Si el formato no tiene
-    un perfil de pie de página conocido, no se agrega nada.
+    póliza distinta que haya usado, SOLO el renglón del total tal cual
+    viene en el original (ver _PERFILES_PIE_PAGINA / _franja_pie_de_pagina)
+    -no toda la página vacía que sigue después. Es el total de TODA la
+    póliza, no solo de este cliente, pero así lo pide VMA: que se vea
+    igual que el documento fuente. Si el formato no tiene un perfil de
+    pie de página conocido, no se agrega nada.
 
     Ese pie de página se copia como IMAGEN (renderizado), no con el mismo
     show_pdf_page vectorial que se usa para el encabezado y las filas: el
@@ -630,10 +638,12 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 if documento_pie.is_encrypted:
                     continue
                 ultima_pagina = documento_pie[-1]
-                piso = _piso_de_datos(ultima_pagina, formato)
-                if piso is None:
+                franja_total = _franja_pie_de_pagina(ultima_pagina, formato)
+                if franja_total is None:
                     continue
-                franja_pie = fitz.Rect(ultima_pagina.rect.x0, piso, ultima_pagina.rect.x1, ultima_pagina.rect.height)
+                pie_y0, pie_y1 = franja_total
+                pie_y1 = min(pie_y1, ultima_pagina.rect.height)  # por si el margen se pasa del borde
+                franja_pie = fitz.Rect(ultima_pagina.rect.x0, pie_y0, ultima_pagina.rect.x1, pie_y1)
                 _agregar_bloque(
                     estado, documento_pie, ultima_pagina, franja_pie,
                     resaltar=False, repetir_encabezado=False, como_imagen=True,
