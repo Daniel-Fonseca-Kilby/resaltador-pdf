@@ -229,15 +229,18 @@ _PERFILES_PIE_PAGINA = {
 }
 
 
-_MARGEN_FRANJA_PIE = 28  # puntos debajo del renglón del total -para incluir la caja del valor sin arrastrar el resto de la página vacía
+# margen arriba del renglón del total: tiene que ser lo bastante grande
+# para no llevarse ni un pixel de la última fila de datos (a veces
+# resaltada en amarillo, si calzó con alguna búsqueda) que queda justo
+# encima, pero sin comerse el renglón del total en sí
+_MARGEN_ARRIBA_PIE = 12
 
 
-def _franja_pie_por_anclas(pagina, anclas: list[str], textpage=None) -> tuple[float, float] | None:
-    """(y0, y1) del renglón donde aparecen las anclas del total, con
-    margen -para recortar SOLO esa fila (con su caja de valor), no toda
-    la página hacia abajo hasta el borde."""
+def _franja_pie_por_anclas(pagina, anclas: list[str], textpage=None) -> float | None:
+    """Y justo encima del renglón donde aparecen las anclas del total -para
+    recortar desde ahí hasta el borde inferior de la hoja: se lleva el
+    total, la leyenda y la firma autorizada tal cual salen en el original."""
     y0_minimo = None
-    y1_maximo = None
     for ancla in anclas:
         coincidencias = pagina.search_for(ancla, quads=False, textpage=textpage)
         if not coincidencias:
@@ -245,20 +248,19 @@ def _franja_pie_por_anclas(pagina, anclas: list[str], textpage=None) -> tuple[fl
         for rect in coincidencias:
             if y0_minimo is None or rect.y0 < y0_minimo:
                 y0_minimo = rect.y0
-            if y1_maximo is None or rect.y1 > y1_maximo:
-                y1_maximo = rect.y1
     if y0_minimo is None:
         return None
-    return (y0_minimo - 6, y1_maximo + _MARGEN_FRANJA_PIE)
+    return y0_minimo - _MARGEN_ARRIBA_PIE
 
 
-def _franja_pie_de_pagina(pagina, formato: str = "auto", textpage=None) -> tuple[float, float] | None:
-    """(y0, y1) del renglón del pie de página con el total -no toda la
-    página vacía hasta el borde. Es la contraparte de _techo_de_datos,
-    pero para el final de la póliza en vez del principio: se busca en la
-    ÚLTIMA página del archivo. Si el formato no trae un perfil de pie de
-    página conocido (ej. INS), no se agrega nada -mejor omitirlo que
-    arriesgarse a recortar cualquier cosa."""
+def _franja_pie_de_pagina(pagina, formato: str = "auto", textpage=None) -> float | None:
+    """Y donde empieza el pie de página con el total (para recortar desde
+    ahí hasta el borde inferior de la hoja -incluye el total, la leyenda
+    y la firma autorizada, tal cual salen en el documento original). Es
+    la contraparte de _techo_de_datos, pero para el final de la póliza en
+    vez del principio: se busca en la ÚLTIMA página del archivo. Si el
+    formato no trae un perfil de pie de página conocido (ej. INS), no se
+    agrega nada -mejor omitirlo que arriesgarse a recortar cualquier cosa."""
     perfiles_a_probar = []
     anclas_formato = _PERFILES_PIE_PAGINA.get(formato)
     if anclas_formato:
@@ -321,12 +323,14 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     empleado conocido -si no, se deja como no encontrado.
 
     Al final del documento de cada cliente se agrega, una vez por cada
-    póliza distinta que haya usado, SOLO el renglón del total tal cual
-    viene en el original (ver _PERFILES_PIE_PAGINA / _franja_pie_de_pagina)
-    -no toda la página vacía que sigue después. Es el total de TODA la
-    póliza, no solo de este cliente, pero así lo pide VMA: que se vea
-    igual que el documento fuente. Si el formato no tiene un perfil de
-    pie de página conocido, no se agrega nada.
+    póliza distinta que haya usado, el pie de página con el total tal cual
+    viene en el original -desde el renglón del total hasta el borde
+    inferior de la última página del archivo, así se lleva también la
+    leyenda y la firma autorizada (ver _PERFILES_PIE_PAGINA /
+    _franja_pie_de_pagina). Es el total de TODA la póliza, no solo de
+    este cliente, pero así lo pide VMA: que se vea exactamente igual que
+    el documento fuente. Si el formato no tiene un perfil de pie de
+    página conocido, no se agrega nada.
 
     Ese pie de página se copia como IMAGEN (renderizado), no con el mismo
     show_pdf_page vectorial que se usa para el encabezado y las filas: el
@@ -638,12 +642,10 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 if documento_pie.is_encrypted:
                     continue
                 ultima_pagina = documento_pie[-1]
-                franja_total = _franja_pie_de_pagina(ultima_pagina, formato)
-                if franja_total is None:
+                piso = _franja_pie_de_pagina(ultima_pagina, formato)
+                if piso is None:
                     continue
-                pie_y0, pie_y1 = franja_total
-                pie_y1 = min(pie_y1, ultima_pagina.rect.height)  # por si el margen se pasa del borde
-                franja_pie = fitz.Rect(ultima_pagina.rect.x0, pie_y0, ultima_pagina.rect.x1, pie_y1)
+                franja_pie = fitz.Rect(ultima_pagina.rect.x0, piso, ultima_pagina.rect.x1, ultima_pagina.rect.height)
                 _agregar_bloque(
                     estado, documento_pie, ultima_pagina, franja_pie,
                     resaltar=False, repetir_encabezado=False, como_imagen=True,
