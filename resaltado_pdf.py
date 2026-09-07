@@ -361,17 +361,21 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     exactamente una fila de todo el lote y esa fila no es ya de otro
     empleado conocido -si no, se deja como no encontrado.
 
-    Al final del documento de cada cliente se agrega, una vez por cada
-    póliza distinta que haya usado, el pie de página con el total tal cual
-    viene en el original (ver _PERFILES_PIE_PAGINA / _PERFILES_LEYENDA_PIE
-    / _franjas_pie_de_pagina): el renglón del total y, si se encuentra, la
-    leyenda con la firma autorizada -cada uno recortado ajustado a su
-    propio contenido, sin el hueco en blanco grande que los separa en el
-    documento original (que ahí no se nota, pero al aislarlo como bloque
-    propio se vuelve protagonista). Es el total de TODA la póliza, no
-    solo de este cliente, pero así lo pide VMA: que se vea igual que el
-    documento fuente. Si el formato no tiene un perfil de pie de página
-    conocido, no se agrega nada.
+    Justo después de las filas de cada póliza (antes de pasar a la
+    siguiente póliza de ese mismo cliente, o al final del documento si
+    fue la última) se agrega el pie de página con el total tal cual viene
+    en el original (ver _PERFILES_PIE_PAGINA / _PERFILES_LEYENDA_PIE /
+    _franjas_pie_de_pagina, y _agregar_pie_de_poliza): el renglón del
+    total y, si se encuentra, la leyenda con la firma autorizada -cada
+    uno recortado ajustado a su propio contenido, sin el hueco en blanco
+    grande que los separa en el documento original (que ahí no se nota,
+    pero al aislarlo como bloque propio se vuelve protagonista). Así cada
+    póliza cierra con SU propio total, en vez de amontonar todos los
+    totales al final del documento cuando el cliente tiene oficiales en
+    varias pólizas. Es el total de TODA la póliza, no solo de este
+    cliente, pero así lo pide VMA: que se vea igual que el documento
+    fuente. Si el formato no tiene un perfil de pie de página conocido,
+    no se agrega nada.
 
     Ese pie de página se copia como IMAGEN (renderizado), no con el mismo
     show_pdf_page vectorial que se usa para el encabezado y las filas: el
@@ -457,6 +461,32 @@ def resaltar_por_cedula_y_exportar_por_cliente(
             anotacion.update()
         estado["y"] += alto_bloque + _ESPACIO_ENTRE_FILAS
 
+    def _agregar_pie_de_poliza(estado: dict, ruta_pdf_saliente: str) -> None:
+        """Cierra la póliza que este cliente está dejando atrás con su
+        propio pie de página (total + leyenda/firma si se encuentra),
+        antes de pasar a la siguiente -así cada póliza termina con SU
+        total, en vez de amontonar todos los totales al final del
+        documento. El archivo ya está cerrado a esta altura (se terminó
+        de procesar antes de detectar el cambio de póliza), así que se
+        reabre brevemente solo para esto."""
+        try:
+            documento_pie = fitz.open(ruta_pdf_saliente)
+        except Exception:
+            return
+        try:
+            if documento_pie.is_encrypted:
+                return
+            ultima_pagina = documento_pie[-1]
+            for franja_pie in _franjas_pie_de_pagina(ultima_pagina, formato):
+                _agregar_bloque(
+                    estado, documento_pie, ultima_pagina, franja_pie,
+                    resaltar=False, repetir_encabezado=False, como_imagen=True,
+                )
+        except Exception:
+            pass
+        finally:
+            documento_pie.close()
+
     for ruta_pdf in rutas_pdfs:
         nombre_archivo = Path(ruta_pdf).name
         try:
@@ -514,9 +544,11 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                         estado = _obtener_estado(cliente, pagina)
 
                         if estado["archivo_actual"] != ruta_pdf:
-                            # nueva póliza para este cliente -hoja limpia y encabezado propio
-                            # (si el cliente ya venía de otro archivo se repite este mismo
-                            # bloque de encabezado en cada hoja que la póliza necesite)
+                            # nueva póliza para este cliente -primero se cierra la
+                            # anterior con su propio pie de página (si tenía una),
+                            # después hoja limpia y encabezado propio para esta
+                            if estado["archivo_actual"] is not None:
+                                _agregar_pie_de_poliza(estado, estado["archivo_actual"])
                             if not encabezado_calculado:
                                 primera_pagina = documento[0]
                                 techo_pagina1 = _techo_de_datos(primera_pagina, formato)
@@ -639,6 +671,8 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 estado["encabezado_actual"] = encabezado_ganador
 
                 if estado["archivo_actual"] != ruta_pdf_ganador:
+                    if estado["archivo_actual"] is not None:
+                        _agregar_pie_de_poliza(estado, estado["archivo_actual"])
                     estado["pagina"] = None
                     estado["archivo_actual"] = ruta_pdf_ganador
                     if encabezado_ganador is not None:
@@ -654,44 +688,13 @@ def resaltar_por_cedula_y_exportar_por_cliente(
             finally:
                 documento_ganador.close()
 
-    # pie de página con el total: se agrega al final del documento de cada
-    # cliente, una vez por cada póliza distinta que haya usado -tal cual
-    # sale en el original (el total es de TODA la póliza, no solo de este
-    # cliente, pero es el mismo pie de página que trae el documento fuente)
-    nombre_a_ruta = {Path(ruta).name: ruta for ruta in rutas_pdfs}
-    polizas_por_cliente: dict[str, list[str]] = {}
-    for clave in registros_unicos:
-        cliente = clave[1]
-        for nombre_poliza in polizas_encontradas.get(clave, ()):
-            lista = polizas_por_cliente.setdefault(cliente, [])
-            if nombre_poliza not in lista:
-                lista.append(nombre_poliza)
-
-    for cliente, nombres_poliza in polizas_por_cliente.items():
-        estado = estado_por_cliente.get(cliente)
-        if estado is None:
-            continue
-        for nombre_poliza in nombres_poliza:
-            ruta_poliza = nombre_a_ruta.get(nombre_poliza)
-            if not ruta_poliza:
-                continue
-            try:
-                documento_pie = fitz.open(ruta_poliza)
-            except Exception:
-                continue
-            try:
-                if documento_pie.is_encrypted:
-                    continue
-                ultima_pagina = documento_pie[-1]
-                for franja_pie in _franjas_pie_de_pagina(ultima_pagina, formato):
-                    _agregar_bloque(
-                        estado, documento_pie, ultima_pagina, franja_pie,
-                        resaltar=False, repetir_encabezado=False, como_imagen=True,
-                    )
-            except Exception:
-                pass
-            finally:
-                documento_pie.close()
+    # cada cambio de póliza ya cerró la ANTERIOR con su propio pie de
+    # página (ver _agregar_pie_de_poliza más arriba); acá solo falta la
+    # ÚLTIMA póliza de cada cliente, que nunca tuvo un "cambio" después
+    # que la cerrara
+    for estado in estado_por_cliente.values():
+        if estado["archivo_actual"] is not None:
+            _agregar_pie_de_poliza(estado, estado["archivo_actual"])
 
     carpeta = Path(carpeta_salida)
     carpeta.mkdir(parents=True, exist_ok=True)

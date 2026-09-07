@@ -343,6 +343,56 @@ def test_pie_de_pagina_separa_total_de_leyenda_sin_el_hueco_del_medio(tmp_path):
         documento_salida.close()
 
 
+def test_pie_de_pagina_de_cada_poliza_queda_junto_a_sus_propias_filas(tmp_path):
+    """Si el cliente tiene oficiales en dos pólizas distintas, el total de
+    la póliza 1 tiene que quedar junto a SUS propias filas -no amontonado
+    con el de la póliza 2 al final de todo el documento."""
+    ruta_poliza_a = tmp_path / "poliza_a.pdf"
+    ruta_poliza_b = tmp_path / "poliza_b.pdf"
+
+    documento_a = fitz.open()
+    pagina_a = documento_a.new_page(width=595, height=842)
+    pagina_a.insert_text((36, 40), "EMPRESA POLIZA A", fontsize=13)
+    _escribir_fila(pagina_a, 100, _TITULOS_COLUMNAS)
+    _escribir_fila(pagina_a, 140, [("111111111", "JUAN", "PEREZ MORA", "Ninguna")])
+    pagina_a.insert_text((36, 200), "TOTAL SALARIOS", fontsize=10)
+    documento_a.save(str(ruta_poliza_a))
+    documento_a.close()
+
+    documento_b = fitz.open()
+    pagina_b = documento_b.new_page(width=595, height=842)
+    pagina_b.insert_text((36, 40), "EMPRESA POLIZA B", fontsize=13)
+    _escribir_fila(pagina_b, 100, _TITULOS_COLUMNAS)
+    _escribir_fila(pagina_b, 140, [("111111111", "JUAN", "PEREZ MORA", "Ninguna")])
+    pagina_b.insert_text((36, 200), "TOTAL SALARIOS", fontsize=10)
+    documento_b.save(str(ruta_poliza_b))
+    documento_b.close()
+
+    registros = [{"cedula": "111111111", "cliente": "Cliente Dos Polizas", "nombre": "Juan Perez"}]
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [str(ruta_poliza_a), str(ruta_poliza_b)], registros, str(tmp_path / "salida"), formato="ccss"
+    )
+
+    documento_salida = fitz.open(resultado["archivos_por_cliente"]["Cliente Dos Polizas"])
+    try:
+        # cada póliza (encabezado + fila + su propio total) cabe en su
+        # propia hoja -no queda un total separado al final de todo
+        assert documento_salida.page_count == 2
+
+        texto_pagina_1 = documento_salida[0].get_text()
+        assert "EMPRESA POLIZA A" in texto_pagina_1
+        assert "EMPRESA POLIZA B" not in texto_pagina_1
+        assert len(documento_salida[0].get_images(full=True)) >= 1
+
+        texto_pagina_2 = documento_salida[1].get_text()
+        assert "EMPRESA POLIZA B" in texto_pagina_2
+        assert "EMPRESA POLIZA A" not in texto_pagina_2
+        assert len(documento_salida[1].get_images(full=True)) >= 1
+    finally:
+        documento_salida.close()
+
+
 def test_pie_de_pagina_no_se_agrega_si_el_formato_no_tiene_perfil_conocido(tmp_path):
     """Si el formato no tiene un perfil de pie de página conocido (ej.
     INS), no se agrega nada -mejor omitirlo que recortar cualquier cosa."""
