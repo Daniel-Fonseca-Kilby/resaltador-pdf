@@ -312,6 +312,37 @@ def test_pie_de_pagina_con_total_se_agrega_al_final_del_documento(tmp_path):
         documento_salida.close()
 
 
+def test_pie_de_pagina_separa_total_de_leyenda_sin_el_hueco_del_medio(tmp_path):
+    """Si el original trae un hueco en blanco grande entre el total y la
+    leyenda/firma (como en CCSS real), se recortan como DOS franjas
+    separadas -no se arrastra ese hueco como un solo bloque enorme."""
+    ruta_poliza = tmp_path / "poliza_con_hueco.pdf"
+    documento = fitz.open()
+    pagina = documento.new_page(width=595, height=842)
+    pagina.insert_text((36, 40), "EMPRESA CON HUECO", fontsize=13)
+    _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
+    _escribir_fila(pagina, 140, [("111111111", "JUAN", "PEREZ MORA", "Ninguna")])
+    pagina.insert_text((36, 200), "TOTAL SALARIOS", fontsize=10)
+    # hueco grande en blanco entre el total (y=200) y la leyenda (y=800),
+    # igual que en el documento real de la CCSS
+    pagina.insert_text((36, 800), "Ajuste al minimo base diferenciada SEM", fontsize=8)
+    documento.save(str(ruta_poliza))
+    documento.close()
+
+    registros = [{"cedula": "111111111", "cliente": "Cliente Con Hueco", "nombre": "Juan Perez"}]
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [str(ruta_poliza)], registros, str(tmp_path / "salida"), formato="ccss"
+    )
+
+    documento_salida = fitz.open(resultado["archivos_por_cliente"]["Cliente Con Hueco"])
+    try:
+        total_imagenes = sum(len(p.get_images(full=True)) for p in documento_salida)
+        assert total_imagenes == 2  # una franja para el total, otra para la leyenda
+    finally:
+        documento_salida.close()
+
+
 def test_pie_de_pagina_no_se_agrega_si_el_formato_no_tiene_perfil_conocido(tmp_path):
     """Si el formato no tiene un perfil de pie de página conocido (ej.
     INS), no se agrega nada -mejor omitirlo que recortar cualquier cosa."""

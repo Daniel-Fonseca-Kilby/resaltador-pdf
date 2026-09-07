@@ -222,25 +222,33 @@ def _techo_de_datos(pagina, formato: str = "auto", textpage=None) -> float | Non
     return None
 
 
-# frases que solo salen en la fila del total, al final de cada póliza
+# frases que solo salen en el renglón del total, al final de cada póliza
 _PERFILES_PIE_PAGINA = {
     "mnk": ["TOTAL DE TRABAJADORES", "TOTAL DE SALARIO"],
     "ccss": ["TOTAL SALARIOS"],
 }
 
+# frases que solo salen donde arranca la leyenda/firma, después del total
+# -entre el total y esto suele haber un hueco en blanco grande en el
+# original (parte del formato de la hoja), que no interesa arrastrar
+_PERFILES_LEYENDA_PIE = {
+    "mnk": ["CODIFICACIÓN"],
+    "ccss": ["Ajuste al mínimo base diferenciada SEM"],
+}
 
-# margen arriba del renglón del total: tiene que ser lo bastante grande
-# para no llevarse ni un pixel de la última fila de datos (a veces
-# resaltada en amarillo, si calzó con alguna búsqueda) que queda justo
-# encima, pero sin comerse el renglón del total en sí
+# margen arriba de un renglón detectado: lo bastante grande para no
+# llevarse ni un pixel de lo que queda justo encima (ej. la última fila
+# de datos, a veces resaltada en amarillo si calzó con alguna búsqueda),
+# pero sin comerse el renglón en sí
 _MARGEN_ARRIBA_PIE = 12
+_MARGEN_ABAJO_TOTAL = 26  # alto aprox. del renglón del total + su caja de valor
 
 
-def _franja_pie_por_anclas(pagina, anclas: list[str], textpage=None) -> float | None:
-    """Y justo encima del renglón donde aparecen las anclas del total -para
-    recortar desde ahí hasta el borde inferior de la hoja: se lleva el
-    total, la leyenda y la firma autorizada tal cual salen en el original."""
+def _franja_por_anclas(pagina, anclas: list[str], textpage=None) -> tuple[float, float] | None:
+    """(y0, y1) del renglón donde aparecen las anclas, sin margen -el
+    llamador decide cuánto margen agregar según qué va a recortar."""
     y0_minimo = None
+    y1_maximo = None
     for ancla in anclas:
         coincidencias = pagina.search_for(ancla, quads=False, textpage=textpage)
         if not coincidencias:
@@ -248,32 +256,63 @@ def _franja_pie_por_anclas(pagina, anclas: list[str], textpage=None) -> float | 
         for rect in coincidencias:
             if y0_minimo is None or rect.y0 < y0_minimo:
                 y0_minimo = rect.y0
+            if y1_maximo is None or rect.y1 > y1_maximo:
+                y1_maximo = rect.y1
     if y0_minimo is None:
         return None
-    return y0_minimo - _MARGEN_ARRIBA_PIE
+    return (y0_minimo, y1_maximo)
 
 
-def _franja_pie_de_pagina(pagina, formato: str = "auto", textpage=None) -> float | None:
-    """Y donde empieza el pie de página con el total (para recortar desde
-    ahí hasta el borde inferior de la hoja -incluye el total, la leyenda
-    y la firma autorizada, tal cual salen en el documento original). Es
-    la contraparte de _techo_de_datos, pero para el final de la póliza en
-    vez del principio: se busca en la ÚLTIMA página del archivo. Si el
-    formato no trae un perfil de pie de página conocido (ej. INS), no se
-    agrega nada -mejor omitirlo que arriesgarse a recortar cualquier cosa."""
+def _franja_por_perfiles(pagina, perfiles: dict, formato: str, textpage=None) -> tuple[float, float] | None:
+    """Prueba las anclas del formato indicado y después las de los demás
+    perfiles conocidos -mismo criterio que _techo_de_datos, por si el
+    desplegable quedó mal puesto. Devuelve (y0, y1) del renglón donde
+    aparecen, sin margen, o None si ninguna calza en la página."""
     perfiles_a_probar = []
-    anclas_formato = _PERFILES_PIE_PAGINA.get(formato)
+    anclas_formato = perfiles.get(formato)
     if anclas_formato:
         perfiles_a_probar.append(anclas_formato)
-    for anclas_perfil in _PERFILES_PIE_PAGINA.values():
+    for anclas_perfil in perfiles.values():
         if anclas_perfil not in perfiles_a_probar:
             perfiles_a_probar.append(anclas_perfil)
 
     for anclas in perfiles_a_probar:
-        franja = _franja_pie_por_anclas(pagina, anclas, textpage=textpage)
+        franja = _franja_por_anclas(pagina, anclas, textpage=textpage)
         if franja is not None:
             return franja
     return None
+
+
+def _franjas_pie_de_pagina(pagina, formato: str = "auto", textpage=None) -> list["fitz.Rect"]:
+    """Las franjas del pie de página que hay que copiar de la ÚLTIMA
+    página del archivo -el total, y si se encuentra, la leyenda/firma-
+    cada una ajustada a su propio contenido, para no arrastrar el hueco
+    en blanco grande que separa a ambas en el documento original (ahí no
+    se nota porque es solo el final de una hoja normal, pero al aislarlo
+    como bloque propio en el PDF del cliente se vuelve protagonista).
+
+    Es la contraparte de _techo_de_datos, pero para el final de la
+    póliza en vez del principio. Si el formato no tiene un perfil de
+    total conocido (ej. INS), no se agrega nada -mejor omitirlo que
+    arriesgarse a recortar cualquier cosa."""
+    franjas = []
+
+    total = _franja_por_perfiles(pagina, _PERFILES_PIE_PAGINA, formato, textpage=textpage)
+    if total is None:
+        return franjas
+    y0_total, y1_total = total
+    franjas.append(fitz.Rect(
+        pagina.rect.x0, y0_total - _MARGEN_ARRIBA_PIE, pagina.rect.x1, y1_total + _MARGEN_ABAJO_TOTAL,
+    ))
+
+    leyenda = _franja_por_perfiles(pagina, _PERFILES_LEYENDA_PIE, formato, textpage=textpage)
+    if leyenda is not None:
+        y0_leyenda, _y1_leyenda = leyenda
+        franjas.append(fitz.Rect(
+            pagina.rect.x0, y0_leyenda - _MARGEN_ARRIBA_PIE, pagina.rect.x1, pagina.rect.height,
+        ))
+
+    return franjas
 
 
 _MARGEN_PAGINA = 24  # puntos de margen arriba/abajo en cada página de salida
@@ -324,13 +363,15 @@ def resaltar_por_cedula_y_exportar_por_cliente(
 
     Al final del documento de cada cliente se agrega, una vez por cada
     póliza distinta que haya usado, el pie de página con el total tal cual
-    viene en el original -desde el renglón del total hasta el borde
-    inferior de la última página del archivo, así se lleva también la
-    leyenda y la firma autorizada (ver _PERFILES_PIE_PAGINA /
-    _franja_pie_de_pagina). Es el total de TODA la póliza, no solo de
-    este cliente, pero así lo pide VMA: que se vea exactamente igual que
-    el documento fuente. Si el formato no tiene un perfil de pie de
-    página conocido, no se agrega nada.
+    viene en el original (ver _PERFILES_PIE_PAGINA / _PERFILES_LEYENDA_PIE
+    / _franjas_pie_de_pagina): el renglón del total y, si se encuentra, la
+    leyenda con la firma autorizada -cada uno recortado ajustado a su
+    propio contenido, sin el hueco en blanco grande que los separa en el
+    documento original (que ahí no se nota, pero al aislarlo como bloque
+    propio se vuelve protagonista). Es el total de TODA la póliza, no
+    solo de este cliente, pero así lo pide VMA: que se vea igual que el
+    documento fuente. Si el formato no tiene un perfil de pie de página
+    conocido, no se agrega nada.
 
     Ese pie de página se copia como IMAGEN (renderizado), no con el mismo
     show_pdf_page vectorial que se usa para el encabezado y las filas: el
@@ -642,14 +683,11 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 if documento_pie.is_encrypted:
                     continue
                 ultima_pagina = documento_pie[-1]
-                piso = _franja_pie_de_pagina(ultima_pagina, formato)
-                if piso is None:
-                    continue
-                franja_pie = fitz.Rect(ultima_pagina.rect.x0, piso, ultima_pagina.rect.x1, ultima_pagina.rect.height)
-                _agregar_bloque(
-                    estado, documento_pie, ultima_pagina, franja_pie,
-                    resaltar=False, repetir_encabezado=False, como_imagen=True,
-                )
+                for franja_pie in _franjas_pie_de_pagina(ultima_pagina, formato):
+                    _agregar_bloque(
+                        estado, documento_pie, ultima_pagina, franja_pie,
+                        resaltar=False, repetir_encabezado=False, como_imagen=True,
+                    )
             except Exception:
                 pass
             finally:
