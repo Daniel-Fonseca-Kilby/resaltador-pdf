@@ -3,3 +3,8 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+
+# graphify / Claude Code -no se sube al repo
+CLAUDE.md
+.claude/
+graphify-out/
