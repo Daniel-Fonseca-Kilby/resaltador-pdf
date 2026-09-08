@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pymupdf as fitz
 
-from resaltado_pdf import _techo_de_datos, resaltar_por_cedula_y_exportar_por_cliente
+from resaltado_pdf import _franjas_pie_de_pagina, _techo_de_datos, resaltar_por_cedula_y_exportar_por_cliente
 
 
 def _escribir_fila(pagina, y, celdas, fontsize=10):
@@ -344,7 +344,7 @@ def test_pie_de_pagina_con_total_se_agrega_al_final_del_documento(tmp_path):
     pagina = documento.new_page(width=595, height=842)
     pagina.insert_text((36, 40), "EMPRESA CON TOTAL", fontsize=13)
     _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
-    _escribir_fila(pagina, 140, [("111111111", "JUAN", "PEREZ MORA", "Ninguna")])
+    _escribir_fila(pagina, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
     pagina.insert_text((36, 700), "TOTAL DE TRABAJADORES 1", fontsize=10)
     pagina.insert_text((36, 720), "TOTAL DE SALARIO 405,710.71", fontsize=10)
     documento.save(str(ruta_poliza))
@@ -373,7 +373,7 @@ def test_pie_de_pagina_separa_total_de_leyenda_sin_el_hueco_del_medio(tmp_path):
     pagina = documento.new_page(width=595, height=842)
     pagina.insert_text((36, 40), "EMPRESA CON HUECO", fontsize=13)
     _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
-    _escribir_fila(pagina, 140, [("111111111", "JUAN", "PEREZ MORA", "Ninguna")])
+    _escribir_fila(pagina, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
     pagina.insert_text((36, 200), "TOTAL SALARIOS", fontsize=10)
     # hueco grande en blanco entre el total (y=200) y la leyenda (y=800),
     # igual que en el documento real de la CCSS
@@ -406,7 +406,7 @@ def test_pie_de_pagina_de_cada_poliza_queda_junto_a_sus_propias_filas(tmp_path):
     pagina_a = documento_a.new_page(width=595, height=842)
     pagina_a.insert_text((36, 40), "EMPRESA POLIZA A", fontsize=13)
     _escribir_fila(pagina_a, 100, _TITULOS_COLUMNAS)
-    _escribir_fila(pagina_a, 140, [("111111111", "JUAN", "PEREZ MORA", "Ninguna")])
+    _escribir_fila(pagina_a, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
     pagina_a.insert_text((36, 200), "TOTAL SALARIOS", fontsize=10)
     documento_a.save(str(ruta_poliza_a))
     documento_a.close()
@@ -415,7 +415,7 @@ def test_pie_de_pagina_de_cada_poliza_queda_junto_a_sus_propias_filas(tmp_path):
     pagina_b = documento_b.new_page(width=595, height=842)
     pagina_b.insert_text((36, 40), "EMPRESA POLIZA B", fontsize=13)
     _escribir_fila(pagina_b, 100, _TITULOS_COLUMNAS)
-    _escribir_fila(pagina_b, 140, [("111111111", "JUAN", "PEREZ MORA", "Ninguna")])
+    _escribir_fila(pagina_b, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
     pagina_b.insert_text((36, 200), "TOTAL SALARIOS", fontsize=10)
     documento_b.save(str(ruta_poliza_b))
     documento_b.close()
@@ -460,7 +460,7 @@ def test_varias_polizas_seguidas_conservan_todo_el_contenido_tras_guardarse_a_di
         pagina = documento.new_page(width=595, height=842)
         pagina.insert_text((36, 40), f"EMPRESA POLIZA {letra}", fontsize=13)
         _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
-        _escribir_fila(pagina, 140, [("111111111", "JUAN", "PEREZ MORA", "Ninguna")])
+        _escribir_fila(pagina, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
         pagina.insert_text((36, 200), "TOTAL SALARIOS", fontsize=10)
         documento.save(str(ruta))
         documento.close()
@@ -528,7 +528,7 @@ def test_pie_de_pagina_no_se_agrega_si_el_formato_no_tiene_perfil_conocido(tmp_p
     pagina = documento.new_page(width=595, height=842)
     pagina.insert_text((36, 40), "EMPRESA SIN PERFIL", fontsize=13)
     _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
-    _escribir_fila(pagina, 140, [("111111111", "JUAN", "PEREZ MORA", "Ninguna")])
+    _escribir_fila(pagina, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
     documento.save(str(ruta_poliza))
     documento.close()
 
@@ -543,6 +543,29 @@ def test_pie_de_pagina_no_se_agrega_si_el_formato_no_tiene_perfil_conocido(tmp_p
         assert documento_salida.page_count == 1
     finally:
         documento_salida.close()
+
+
+def test_franja_del_total_no_incluye_encabezado_repetido_pegado_arriba():
+    """Cuando a la última hoja de una póliza le quedan pocas filas, CCSS
+    repite el renglón de títulos de columna justo antes del total. La
+    franja recortada para el pie de página no debe incluir ese renglón
+    -si lo hiciera, saldría un pedazo de encabezado repetido y
+    desordenado justo arriba del total."""
+    documento = fitz.open()
+    pagina = documento.new_page(width=595, height=842)
+    pagina.insert_text((36, 40), "EMPRESA PRUEBA", fontsize=13)
+    _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
+    _escribir_fila(pagina, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
+    # renglón de títulos repetido, muy pegado al total -el caso real que
+    # se ve cuando a la hoja le quedan pocas filas
+    _escribir_fila(pagina, 150, _TITULOS_COLUMNAS)
+    pagina.insert_text((36, 168), "TOTAL SALARIOS", fontsize=10)
+
+    franjas = _franjas_pie_de_pagina(pagina, formato="ccss")
+
+    assert len(franjas) == 1
+    rect_encabezado_repetido = pagina.search_for("OBSERVACION")[-1]
+    assert franjas[0].y0 >= rect_encabezado_repetido.y1
 
 
 def test_polizas_distintas_conservan_su_propio_encabezado(tmp_path):

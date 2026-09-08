@@ -308,8 +308,24 @@ def _franjas_pie_de_pagina(pagina, formato: str = "auto", textpage=None) -> list
     if total is None:
         return franjas
     y0_total, y1_total = total
+
+    # cuando a la última hoja le quedan pocas filas, CCSS repite el
+    # renglón de títulos de columna justo antes del total -si ese renglón
+    # cae más cerca del total que el margen fijo, hay que recortar justo
+    # debajo de él para no arrastrarlo al pie de página. Se usa un margen
+    # chico (no el de _techo_de_datos, pensado para el espacio más amplio
+    # antes de la primera fila de datos) para no pasarse de largo y comerse
+    # el total.
+    margen_superior = y0_total - _MARGEN_ARRIBA_PIE
+    encabezado_repetido = _franja_por_perfiles(pagina, _PERFILES_ENCABEZADO, formato, textpage=textpage)
+    if encabezado_repetido is not None:
+        _y0_encabezado, y1_encabezado = encabezado_repetido
+        limite_tras_encabezado = y1_encabezado + 4
+        if margen_superior < limite_tras_encabezado < y0_total:
+            margen_superior = limite_tras_encabezado
+
     franjas.append(fitz.Rect(
-        pagina.rect.x0, y0_total - _MARGEN_ARRIBA_PIE, pagina.rect.x1, y1_total + _MARGEN_ABAJO_TOTAL,
+        pagina.rect.x0, margen_superior, pagina.rect.x1, y1_total + _MARGEN_ABAJO_TOTAL,
     ))
 
     leyenda = _franja_por_perfiles(pagina, _PERFILES_LEYENDA_PIE, formato, textpage=textpage)
