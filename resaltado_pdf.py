@@ -438,6 +438,10 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     estado_por_cliente: dict[str, dict] = {}
     # (clave_cedula, cliente) -> set de nombres de archivo/póliza donde se encontró
     polizas_encontradas: dict[tuple[str, str], set] = {}
+    # cliente -> set de rutas completas (no solo nombre) de póliza ya usadas
+    # -para que la segunda pasada no reabra una que este cliente ya dejó
+    # atrás y le duplique encabezado/pie de página fuera de orden
+    archivos_usados_por_cliente: dict[str, set] = {}
     errores_por_archivo: dict[str, str] = {}
 
     def _obtener_estado(cliente: str, pagina_origen) -> dict:
@@ -608,6 +612,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                         vistas.append(franja)
 
                         estado = _obtener_estado(cliente, pagina)
+                        archivos_usados_por_cliente.setdefault(cliente, set()).add(ruta_pdf)
 
                         if estado["archivo_actual"] != ruta_pdf:
                             # nueva póliza para este cliente -primero se cierra la
@@ -716,6 +721,18 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 continue  # ninguna fila, o ambiguo entre varias -no se arriesga
             ruta_pdf_ganador, numero_pagina, coords = candidatos[0]
             cliente = clave[1]
+
+            # si este cliente ya usó esa póliza y no es la que tiene abierta
+            # ahora mismo, ya se cerró con su propio pie de página más
+            # arriba en el documento -reabrirla la duplicaría, fuera de
+            # orden, al final. Mejor no rescatar este caso puntual que
+            # desordenar/duplicar todo el PDF del cliente.
+            estado_previo = estado_por_cliente.get(cliente)
+            archivo_actual_previo = estado_previo["archivo_actual"] if estado_previo else None
+            usados_por_este_cliente = archivos_usados_por_cliente.get(cliente, set())
+            if ruta_pdf_ganador in usados_por_este_cliente and ruta_pdf_ganador != archivo_actual_previo:
+                continue
+
             franja = fitz.Rect(*coords)
 
             try:
@@ -755,6 +772,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 _agregar_bloque(estado, documento_ganador, pagina_ganadora, franja, resaltar=resaltar_filas)
 
                 polizas_encontradas.setdefault(clave, set()).add(Path(ruta_pdf_ganador).name)
+                archivos_usados_por_cliente.setdefault(cliente, set()).add(ruta_pdf_ganador)
                 encontrados_por_nombre.add(clave)
             finally:
                 documento_ganador.close()

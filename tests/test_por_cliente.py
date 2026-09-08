@@ -174,6 +174,58 @@ def test_segunda_pasada_no_le_roba_la_fila_a_otro_empleado_conocido(tmp_path):
     assert no_encontrados_clientes == {"Cliente Equivocado"}
 
 
+def test_segunda_pasada_no_reabre_una_poliza_que_el_cliente_ya_dejo_atras(tmp_path):
+    """Si el cliente ya usó la póliza A y pasó a la póliza B (por cédula),
+    y un pendiente de nombre calza justo en la póliza A -que ya quedó
+    atrás-, no se rescata: reabrirla le duplicaría el encabezado fuera de
+    orden, al final del documento (en vez de dejarlo donde corresponde)."""
+    ruta_poliza_a = tmp_path / "poliza_a.pdf"
+    ruta_poliza_b = tmp_path / "poliza_b.pdf"
+
+    documento_a = fitz.open()
+    pagina_a = documento_a.new_page(width=595, height=842)
+    pagina_a.insert_text((36, 40), "EMPRESA POLIZA A", fontsize=13)
+    _escribir_fila(pagina_a, 100, _TITULOS_COLUMNAS)
+    _escribir_fila(pagina_a, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
+    _escribir_fila(pagina_a, 170, [("222222222", 90), ("MARIA", 80), ("SOLANO MORA", 100), ("Ninguna", 90)])
+    documento_a.save(str(ruta_poliza_a))
+    documento_a.close()
+
+    documento_b = fitz.open()
+    pagina_b = documento_b.new_page(width=595, height=842)
+    pagina_b.insert_text((36, 40), "EMPRESA POLIZA B", fontsize=13)
+    _escribir_fila(pagina_b, 100, _TITULOS_COLUMNAS)
+    _escribir_fila(pagina_b, 140, [("333333333", 90), ("LUIS", 80), ("ZUNIGA RAMIREZ", 100), ("Ninguna", 90)])
+    documento_b.save(str(ruta_poliza_b))
+    documento_b.close()
+
+    registros = [
+        {"cedula": "111111111", "cliente": "Cliente Mixto", "nombre": "Juan Perez"},
+        {"cedula": "333333333", "cliente": "Cliente Mixto", "nombre": "Luis Zuniga"},
+        # esta cédula NO calza (simula el caso DIMEX/CCSS), pero su nombre
+        # SÍ aparece en la póliza A -que este cliente ya dejó atrás
+        {"cedula": "999999999", "cliente": "Cliente Mixto", "nombre": "Maria Solano Mora"},
+    ]
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [str(ruta_poliza_a), str(ruta_poliza_b)], registros, str(tmp_path / "salida"), formato="mnk"
+    )
+
+    documento_salida = fitz.open(resultado["archivos_por_cliente"]["Cliente Mixto"])
+    try:
+        # el encabezado de la póliza A no debe reaparecer duplicado al
+        # final del documento (fuera de la página donde corresponde)
+        assert documento_salida[0].get_text().count("EMPRESA POLIZA A") == 1
+        for pagina_extra in documento_salida[1:]:
+            assert "EMPRESA POLIZA A" not in pagina_extra.get_text()
+    finally:
+        documento_salida.close()
+
+    # a Maria Solano no se le rescata -mejor eso que desordenar el PDF
+    no_encontrados_cedulas = {r["cedula"] for r in resultado["no_encontrados"]}
+    assert "999999999" in no_encontrados_cedulas
+
+
 def test_pdf_con_contrasena_se_reporta_como_error_sin_tumbar_el_proceso(tmp_path):
     documento = fitz.open()
     documento.new_page()
