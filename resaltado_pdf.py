@@ -513,7 +513,16 @@ def resaltar_por_cedula_y_exportar_por_cliente(
             return
 
         _asegurar_documento(estado)
-        if estado["pagina"] is None or estado["y"] + alto_bloque > estado["alto"] - _MARGEN_PAGINA:
+        if estado["pagina"] is not None and estado["y"] + alto_bloque > estado["alto"] - _MARGEN_PAGINA:
+            # la página que se acaba de llenar ya no se vuelve a tocar -se
+            # guarda a disco y se libera antes de crear la siguiente. Sin
+            # esto, un cliente con MUCHAS filas dentro de una sola póliza
+            # (sin cambio de póliza de por medio) mantenía su documento
+            # completo en RAM hasta el final -el cambio de póliza no
+            # alcanza para acotar la memoria en ese caso.
+            _flush_a_disco(estado)
+            _asegurar_documento(estado)
+        if estado["pagina"] is None:
             estado["pagina"] = estado["documento"].new_page(width=estado["ancho"], height=estado["alto"])
             estado["y"] = _MARGEN_PAGINA
             encabezado = estado["encabezado_actual"]
@@ -531,8 +540,8 @@ def resaltar_por_cedula_y_exportar_por_cliente(
             anotacion.update()
         estado["y"] += alto_bloque + _ESPACIO_ENTRE_FILAS
 
-    def _agregar_imagen_cacheada(estado: dict, pixmap, ancho_original: float, alto_original: float) -> None:
-        """Como _agregar_bloque, pero para un pixmap ya renderizado de
+    def _agregar_imagen_cacheada(estado: dict, png_bytes: bytes, ancho_original: float, alto_original: float) -> None:
+        """Como _agregar_bloque, pero para una imagen PNG ya renderizada de
         antemano (ver _pixmaps_pie_de_poliza) -no necesita el documento ni
         la página de origen abiertos, así que sirve para reusar el mismo
         render entre varios clientes que comparten la misma póliza, sin
@@ -546,12 +555,15 @@ def resaltar_por_cedula_y_exportar_por_cliente(
             return
 
         _asegurar_documento(estado)
-        if estado["pagina"] is None or estado["y"] + alto_bloque > estado["alto"] - _MARGEN_PAGINA:
+        if estado["pagina"] is not None and estado["y"] + alto_bloque > estado["alto"] - _MARGEN_PAGINA:
+            _flush_a_disco(estado)
+            _asegurar_documento(estado)
+        if estado["pagina"] is None:
             estado["pagina"] = estado["documento"].new_page(width=estado["ancho"], height=estado["alto"])
             estado["y"] = _MARGEN_PAGINA
 
         destino = fitz.Rect(0, estado["y"], estado["ancho"], estado["y"] + alto_bloque)
-        estado["pagina"].insert_image(destino, pixmap=pixmap)
+        estado["pagina"].insert_image(destino, stream=png_bytes)
         estado["y"] += alto_bloque + _ESPACIO_ENTRE_FILAS
 
     pixmaps_pie_por_archivo: dict[str, list[tuple]] = {}
@@ -563,7 +575,13 @@ def resaltar_por_cedula_y_exportar_por_cliente(
         que la usó. Se copia como IMAGEN (no con show_pdf_page vectorial)
         porque el total de algunos formatos (ej. CCSS) lo rellena la
         Oficina Virtual como un campo de formulario, no como texto de la
-        página, y show_pdf_page no arrastra el valor de esos campos."""
+        página, y show_pdf_page no arrastra el valor de esos campos.
+
+        Se cachea como PNG comprimido (no como Pixmap crudo): un recorte de
+        pie de página es casi todo fondo blanco con texto, así que PNG (sin
+        pérdida) lo reduce muchísimo -con lotes grandes, docenas de pólizas
+        cacheadas en RAM como Pixmap sin comprimir era otro punto donde se
+        acumulaba memoria."""
         if ruta_pdf_saliente in pixmaps_pie_por_archivo:
             return pixmaps_pie_por_archivo[ruta_pdf_saliente]
 
@@ -588,7 +606,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                         pass
                 for franja_pie in _franjas_pie_de_pagina(ultima_pagina, formato):
                     pixmap = ultima_pagina.get_pixmap(clip=franja_pie, matrix=fitz.Matrix(2, 2))
-                    resultado.append((pixmap, ancho_pagina, franja_pie.height))
+                    resultado.append((pixmap.tobytes("png"), ancho_pagina, franja_pie.height))
         except Exception:
             pass
         finally:
@@ -605,8 +623,8 @@ def resaltar_por_cedula_y_exportar_por_cliente(
         documento. El render se saca de _pixmaps_pie_de_poliza, que lo
         cachea por archivo -si varios clientes comparten la misma póliza,
         solo se reabre y se renderiza una vez entre todos ellos."""
-        for pixmap, ancho_pagina, alto_franja in _pixmaps_pie_de_poliza(ruta_pdf_saliente):
-            _agregar_imagen_cacheada(estado, pixmap, ancho_pagina, alto_franja)
+        for png_bytes, ancho_pagina, alto_franja in _pixmaps_pie_de_poliza(ruta_pdf_saliente):
+            _agregar_imagen_cacheada(estado, png_bytes, ancho_pagina, alto_franja)
 
     for ruta_pdf in rutas_pdfs:
         nombre_archivo = Path(ruta_pdf).name

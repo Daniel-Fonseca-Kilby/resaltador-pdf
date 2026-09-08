@@ -595,8 +595,16 @@ def test_encabezado_se_repite_si_la_poliza_desborda_una_hoja(tmp_path):
     documento = fitz.open(resultado["archivos_por_cliente"]["Cliente Lote Grande"])
     try:
         assert documento.page_count > 1
+        texto_completo = ""
         for pagina_salida in documento:
             assert "EMPRESA POLIZA LARGA" in pagina_salida.get_text()
+            texto_completo += pagina_salida.get_text()
+        # el desborde de hoja ahora también guarda a disco y libera memoria
+        # a mitad de camino (ver _flush_a_disco en _agregar_bloque) -esto
+        # confirma que ninguna fila se pierde ni se corrompe al reabrir el
+        # documento para seguir agregando contenido
+        for i in range(cantidad_filas):
+            assert f"APELLIDO {i}" in texto_completo
     finally:
         documento.close()
 
