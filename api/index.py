@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import openpyxl
-from flask import Flask, jsonify, render_template, request, send_file
+from flask import Flask, after_this_request, jsonify, render_template, request, send_file
 from werkzeug.exceptions import HTTPException
 
 from resaltado_pdf import (
@@ -317,15 +317,22 @@ def _procesar_modo_simple(nombres: list[str], archivos):
     (bytes + texto) y con planillas pesadas era lo que más pegaba contra
     los 512 MB de RAM de Render. El detalle por archivo/nombre que antes
     se mandaba en el JSON ahora va en Resumen_Modo_Simple.pdf, adentro del
-    zip; en la respuesta solo quedan los conteos, en cabeceras."""
+    zip; en la respuesta solo quedan los conteos, en cabeceras.
+
+    El zip en sí se arma en un archivo temporal EN DISCO, no en un
+    io.BytesIO() en RAM -con lotes grandes ese buffer era otro punto donde
+    se acumulaba memoria, además de los PDFs que ya se están generando.
+    Se borra después de que la respuesta termine de enviarse."""
     coincidencias_por_archivo: dict[str, dict] = {}
     errores_por_archivo: dict[str, str] = {}
     nombres_zip_usados: set[str] = set()
-    buffer_zip = io.BytesIO()
     carpeta_temporal = Path(tempfile.mkdtemp(prefix="resaltado_simple_"))  # aislado por request, se borra al final
+    archivo_zip_temporal = tempfile.NamedTemporaryFile(suffix=".zip", prefix="resaltado_simple_zip_", delete=False)
+    ruta_zip = Path(archivo_zip_temporal.name)
+    archivo_zip_temporal.close()
 
     try:
-        with zipfile.ZipFile(buffer_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+        with zipfile.ZipFile(ruta_zip, "w", zipfile.ZIP_DEFLATED) as zf:
             for i, archivo in enumerate(archivos):
                 nombre_archivo = Path(archivo.filename).name
                 if not nombre_archivo.lower().endswith(".pdf"):
@@ -365,7 +372,6 @@ def _procesar_modo_simple(nombres: list[str], archivos):
                     ],
                 )
                 zf.writestr("Resumen_Modo_Simple.pdf", resumen_pdf)
-        buffer_zip.seek(0)
     finally:
         shutil.rmtree(carpeta_temporal, ignore_errors=True)
 
@@ -379,8 +385,13 @@ def _procesar_modo_simple(nombres: list[str], archivos):
         total_archivos_ok, total_archivos_ok + total_errores, total_coincidencias,
     )
 
+    @after_this_request
+    def _borrar_zip_temporal(response):
+        ruta_zip.unlink(missing_ok=True)
+        return response
+
     respuesta = send_file(
-        buffer_zip,
+        str(ruta_zip),
         mimetype="application/zip",
         as_attachment=True,
         download_name="pdfs_resaltados.zip",
@@ -441,8 +452,16 @@ def _procesar_modo_cliente(registros: list[dict], archivos, formato: str, resalt
         ]
         errores_archivos.extend(f"{nombre}: no es un archivo PDF." for nombre in pdfs_invalidos)
 
-        buffer_zip = io.BytesIO()
-        with zipfile.ZipFile(buffer_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+        # zip a disco, no a un io.BytesIO() en RAM -con muchos clientes ese
+        # buffer era otro punto donde se acumulaba memoria, aparte de los
+        # PDFs que ya se están generando (ver _procesar_modo_simple)
+        archivo_zip_temporal = tempfile.NamedTemporaryFile(
+            suffix=".zip", prefix="resaltado_cliente_zip_", delete=False
+        )
+        ruta_zip = Path(archivo_zip_temporal.name)
+        archivo_zip_temporal.close()
+
+        with zipfile.ZipFile(ruta_zip, "w", zipfile.ZIP_DEFLATED) as zf:
             for _cliente, ruta_pdf in sorted(resultado["archivos_por_cliente"].items()):
                 zf.write(ruta_pdf, arcname=Path(ruta_pdf).name)
             if no_encontrados or errores_archivos:
@@ -460,7 +479,6 @@ def _procesar_modo_cliente(registros: list[dict], archivos, formato: str, resalt
             # contar oficiales a mano
             resumen_excel = generar_excel_resumen(resultado["detalle_registros"])
             zf.writestr("Resumen_Facturacion.xlsx", resumen_excel)
-        buffer_zip.seek(0)
     finally:
         shutil.rmtree(carpeta_temporal, ignore_errors=True)
 
@@ -470,8 +488,13 @@ def _procesar_modo_cliente(registros: list[dict], archivos, formato: str, resalt
         total_clientes, len(errores_archivos), len(no_encontrados),
     )
 
+    @after_this_request
+    def _borrar_zip_temporal(response):
+        ruta_zip.unlink(missing_ok=True)
+        return response
+
     respuesta = send_file(
-        buffer_zip,
+        str(ruta_zip),
         mimetype="application/zip",
         as_attachment=True,
         download_name="pdfs_por_cliente.zip",
