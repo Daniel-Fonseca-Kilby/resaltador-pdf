@@ -444,6 +444,12 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     archivos_usados_por_cliente: dict[str, set] = {}
     errores_por_archivo: dict[str, str] = {}
 
+    # se crea desde ya (no hasta el final) porque cada estado necesita su
+    # ruta de salida definitiva desde el principio, para poder guardarse a
+    # disco y liberar memoria a medida que se procesa -ver _flush_a_disco
+    carpeta = Path(carpeta_salida)
+    carpeta.mkdir(parents=True, exist_ok=True)
+
     def _obtener_estado(cliente: str, pagina_origen) -> dict:
         estado = estado_por_cliente.get(cliente)
         if estado is None:
@@ -455,9 +461,43 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 "alto": pagina_origen.rect.height,
                 "archivo_actual": None,  # ruta_pdf de la póliza que se está volcando ahora
                 "encabezado_actual": None,  # bloque a repetir si la póliza desborda una hoja
+                "ruta_salida": carpeta / f"{_nombre_archivo_seguro(cliente)}.pdf",
+                "guardado_en_disco": False,  # si ya se hizo al menos un guardado en ruta_salida
             }
             estado_por_cliente[cliente] = estado
         return estado
+
+    def _asegurar_documento(estado: dict) -> None:
+        """Si el documento de este cliente se guardó a disco y se liberó de
+        memoria (ver _flush_a_disco), lo reabre para seguir agregándole
+        contenido -transparente para quien llama, solo hay que invocarlo
+        antes de tocar estado['documento']."""
+        if estado["documento"] is None:
+            estado["documento"] = fitz.open(str(estado["ruta_salida"]))
+            estado["pagina"] = None
+
+    def _flush_a_disco(estado: dict) -> None:
+        """Guarda lo acumulado hasta ahora en el PDF final de este cliente y
+        cierra/libera el documento en memoria -con lotes grandes (miles de
+        nombres), mantener el documento COMPLETO de cada cliente en RAM
+        hasta el final del proceso es lo que agota la memoria del
+        servidor. Se llama justo después de cerrar una póliza con su pie
+        de página (ver _agregar_pie_de_poliza): ese bloque ya quedó
+        completo y no se vuelve a tocar, así que es un buen punto para
+        soltarlo. Si hace falta seguir agregando más adelante (el cliente
+        aparece en otra póliza), _asegurar_documento lo reabre."""
+        documento = estado["documento"]
+        if documento is None:
+            return
+        ruta = str(estado["ruta_salida"])
+        if estado["guardado_en_disco"]:
+            documento.save(ruta, incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
+        else:
+            documento.save(ruta)
+            estado["guardado_en_disco"] = True
+        documento.close()
+        estado["documento"] = None
+        estado["pagina"] = None
 
     def _agregar_bloque(
         estado: dict,
@@ -472,6 +512,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
         if alto_bloque <= 0:
             return
 
+        _asegurar_documento(estado)
         if estado["pagina"] is None or estado["y"] + alto_bloque > estado["alto"] - _MARGEN_PAGINA:
             estado["pagina"] = estado["documento"].new_page(width=estado["ancho"], height=estado["alto"])
             estado["y"] = _MARGEN_PAGINA
@@ -504,6 +545,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
         if alto_bloque <= 0:
             return
 
+        _asegurar_documento(estado)
         if estado["pagina"] is None or estado["y"] + alto_bloque > estado["alto"] - _MARGEN_PAGINA:
             estado["pagina"] = estado["documento"].new_page(width=estado["ancho"], height=estado["alto"])
             estado["y"] = _MARGEN_PAGINA
@@ -535,6 +577,15 @@ def resaltar_por_cedula_y_exportar_por_cliente(
             if not documento_pie.is_encrypted:
                 ultima_pagina = documento_pie[-1]
                 ancho_pagina = ultima_pagina.rect.width
+                # el total de CCSS es un campo de formulario (widget): si el
+                # PDF original no trae su "appearance stream" ya generado,
+                # PyMuPDF lo captura en blanco -hay que forzar que lo
+                # regenere a partir del valor actual antes de la foto
+                for widget in ultima_pagina.widgets() or []:
+                    try:
+                        widget.update()
+                    except Exception:
+                        pass
                 for franja_pie in _franjas_pie_de_pagina(ultima_pagina, formato):
                     pixmap = ultima_pagina.get_pixmap(clip=franja_pie, matrix=fitz.Matrix(2, 2))
                     resultado.append((pixmap, ancho_pagina, franja_pie.height))
@@ -620,6 +671,9 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                             # después hoja limpia y encabezado propio para esta
                             if estado["archivo_actual"] is not None:
                                 _agregar_pie_de_poliza(estado, estado["archivo_actual"])
+                                # esa póliza ya quedó cerrada y no se vuelve a
+                                # tocar -se guarda a disco y se libera la RAM
+                                _flush_a_disco(estado)
                             if not encabezado_calculado:
                                 primera_pagina = documento[0]
                                 techo_pagina1 = _techo_de_datos(primera_pagina, formato)
@@ -761,6 +815,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 if estado["archivo_actual"] != ruta_pdf_ganador:
                     if estado["archivo_actual"] is not None:
                         _agregar_pie_de_poliza(estado, estado["archivo_actual"])
+                        _flush_a_disco(estado)
                     estado["pagina"] = None
                     estado["archivo_actual"] = ruta_pdf_ganador
                     if encabezado_ganador is not None:
@@ -785,14 +840,14 @@ def resaltar_por_cedula_y_exportar_por_cliente(
         if estado["archivo_actual"] is not None:
             _agregar_pie_de_poliza(estado, estado["archivo_actual"])
 
-    carpeta = Path(carpeta_salida)
-    carpeta.mkdir(parents=True, exist_ok=True)
     archivos_por_cliente = {}
     for cliente, estado in estado_por_cliente.items():
-        ruta = carpeta / f"{_nombre_archivo_seguro(cliente)}.pdf"
-        estado["documento"].save(str(ruta))
-        estado["documento"].close()
-        archivos_por_cliente[cliente] = str(ruta)
+        # si nunca hubo un cambio de póliza para este cliente (el caso más
+        # común: un solo archivo), este es su único guardado; si ya se
+        # habían hecho guardados antes (ver _flush_a_disco), este solo
+        # agrega lo que faltaba -o no hace nada si ya estaba todo guardado
+        _flush_a_disco(estado)
+        archivos_por_cliente[cliente] = str(estado["ruta_salida"])
 
     detalle_registros = []
     for clave, datos in registros_unicos.items():

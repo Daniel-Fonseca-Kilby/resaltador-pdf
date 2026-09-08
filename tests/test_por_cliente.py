@@ -445,6 +445,47 @@ def test_pie_de_pagina_de_cada_poliza_queda_junto_a_sus_propias_filas(tmp_path):
         documento_salida.close()
 
 
+def test_varias_polizas_seguidas_conservan_todo_el_contenido_tras_guardarse_a_disco(tmp_path):
+    """Por memoria, el PDF de cada cliente se guarda a disco y se libera de
+    RAM en cada cambio de póliza (ver _flush_a_disco), en vez de mantenerse
+    completo en memoria hasta el final -esto obliga a reabrir el archivo y
+    seguir agregándole páginas con guardados incrementales. Con tres
+    pólizas seguidas para el mismo cliente se ejercita ese guardado
+    incremental más de una vez seguida, para asegurar que ninguna página
+    anterior se pierda ni se corrompa por el camino."""
+    rutas = []
+    for letra in ("A", "B", "C"):
+        ruta = tmp_path / f"poliza_{letra.lower()}.pdf"
+        documento = fitz.open()
+        pagina = documento.new_page(width=595, height=842)
+        pagina.insert_text((36, 40), f"EMPRESA POLIZA {letra}", fontsize=13)
+        _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
+        _escribir_fila(pagina, 140, [("111111111", "JUAN", "PEREZ MORA", "Ninguna")])
+        pagina.insert_text((36, 200), "TOTAL SALARIOS", fontsize=10)
+        documento.save(str(ruta))
+        documento.close()
+        rutas.append(str(ruta))
+
+    registros = [{"cedula": "111111111", "cliente": "Cliente Tres Polizas", "nombre": "Juan Perez"}]
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        rutas, registros, str(tmp_path / "salida"), formato="ccss"
+    )
+
+    documento_salida = fitz.open(resultado["archivos_por_cliente"]["Cliente Tres Polizas"])
+    try:
+        assert documento_salida.page_count == 3
+        for indice, letra in enumerate(("A", "B", "C")):
+            texto_pagina = documento_salida[indice].get_text()
+            assert f"EMPRESA POLIZA {letra}" in texto_pagina
+            for otra_letra in ("A", "B", "C"):
+                if otra_letra != letra:
+                    assert f"EMPRESA POLIZA {otra_letra}" not in texto_pagina
+            assert len(documento_salida[indice].get_images(full=True)) >= 1
+    finally:
+        documento_salida.close()
+
+
 def test_pie_de_pagina_se_comparte_entre_clientes_de_la_misma_poliza(tmp_path):
     """El render del pie de página se cachea por archivo (para no
     reabrirlo/re-renderizarlo por cada cliente que comparte la misma
