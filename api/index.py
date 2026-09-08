@@ -35,12 +35,10 @@ app.config["MAX_CONTENT_LENGTH"] = 60 * 1024 * 1024  # 60 MB, de sobra para una 
 
 
 def _limpiar_temporales_antiguos(segundos_vida: int = 3600) -> int:
-    """Busca y elimina carpetas temporales huérfanas con prefijo 'resaltado_'
-    en el directorio temporal del sistema operativo, cuya última modificación
-    sea mayor a 'segundos_vida' (por defecto 1 hora). Una petición cancelada
-    o interrumpida a mitad de camino deja su carpeta sin borrar -sin esto
-    se van acumulando PDFs huérfanos hasta saturar el disco efímero de
-    Render. Devuelve la cantidad de carpetas eliminadas."""
+    """Borra carpetas temporales huérfanas (prefijo 'resaltado_') más
+    viejas que segundos_vida. Si una solicitud se cae a mitad de camino
+    su carpeta queda sin borrar, y con el tiempo eso llena el disco de
+    Render. Devuelve cuántas se borraron."""
     limite = time.time() - segundos_vida
     temp_dir = Path(tempfile.gettempdir())
     borradas = 0
@@ -60,7 +58,7 @@ def _limpiar_temporales_antiguos(segundos_vida: int = 3600) -> int:
     return borradas
 
 
-_limpiar_temporales_antiguos()  # se ejecuta una vez al arrancar el proceso de Flask/Gunicorn
+_limpiar_temporales_antiguos()  # una pasada al arrancar el proceso
 
 
 @app.route("/", methods=["GET"])
@@ -70,8 +68,8 @@ def index():
 
 @app.errorhandler(Exception)
 def _manejar_error(error):
-    """Cualquier error sale como JSON en español (si no, Flask devuelve
-    HTML y el front no puede leer la respuesta)."""
+    """Cualquier error sale como JSON en español -si no, Flask devuelve
+    HTML y el front no lo puede leer."""
     if isinstance(error, HTTPException) and error.code == 413:
         return jsonify(error="El archivo es demasiado grande (máximo 60 MB en total)."), 413
     if isinstance(error, HTTPException):
@@ -92,9 +90,8 @@ def _abrir_libro(archivo):
 
 
 def _decodificar_csv(contenido_bytes: bytes) -> str:
-    """Intenta decodificar el CSV tolerando UTF-8 con BOM, UTF-8 estándar
-    y Latin-1 (Windows-1252, típica de exportaciones de sistemas contables
-    como Softland/SAP/Exactus en Costa Rica)."""
+    """Prueba UTF-8 con BOM, UTF-8 normal y Latin-1 (Windows-1252), que es
+    lo que suelen exportar Softland/SAP/Exactus en Costa Rica."""
     for codificacion in ("utf-8-sig", "utf-8", "latin-1"):
         try:
             return contenido_bytes.decode(codificacion)
@@ -104,9 +101,8 @@ def _decodificar_csv(contenido_bytes: bytes) -> str:
 
 
 def _detectar_delimitador(texto: str) -> str:
-    """Determina si el CSV usa comas o punto y coma -Excel en configuración
-    regional de Costa Rica/Latinoamérica exporta con punto y coma, porque
-    la coma queda reservada para los decimales."""
+    """Excel en español exporta CSV con punto y coma, porque la coma
+    queda reservada para los decimales."""
     primera_linea = texto.splitlines()[0] if texto else ""
     if primera_linea.count(";") > primera_linea.count(","):
         return ";"
@@ -114,10 +110,9 @@ def _detectar_delimitador(texto: str) -> str:
 
 
 def _filas_desde_archivo(archivo):
-    """Generador de tuplas de celdas fila por fila, ya sea que el usuario
-    haya subido un .xlsx/.xlsm o un .csv plano -para que el resto del
-    código (sinónimos de columnas, extracción de cédula/nombre) funcione
-    igual sin importar el formato de origen."""
+    """Generador de filas, venga el archivo en .xlsx/.xlsm o en .csv, para
+    que el resto del código (sinónimos de columnas, extracción de
+    cédula/nombre) no tenga que preocuparse por el formato de origen."""
     nombre = Path(archivo.filename).name.lower()
     archivo.seek(0)
 
@@ -142,8 +137,8 @@ def _filas_desde_archivo(archivo):
 
 
 def _nombres_desde_excel(archivo) -> list[str]:
-    """Lee la primera columna no vacía de cada fila (Excel o CSV).
-    Ignora la primera fila si parece un encabezado (ej. 'Nombre')."""
+    """Primera columna no vacía de cada fila. Ignora la primera fila si
+    parece encabezado (ej. 'Nombre')."""
     nombres = []
     for i, fila in enumerate(_filas_desde_archivo(archivo)):
         valor = next((c for c in fila if c not in (None, "")), None)
@@ -158,9 +153,9 @@ def _nombres_desde_excel(archivo) -> list[str]:
 
 
 def _combinar_nombres(texto_nombres: str, archivo_excel) -> list[str]:
-    """Une los nombres escritos a mano con los del Excel (si se subió uno),
-    sin duplicados (comparando en mayúsculas, conservando el primer formato
-    con el que apareció cada nombre)."""
+    """Junta los nombres escritos a mano con los del Excel, sin
+    duplicados (comparando en mayúsculas, pero conservando el primer
+    formato con el que apareció cada uno)."""
     candidatos = [n.strip() for n in texto_nombres.split(",") if n.strip()]
     if archivo_excel and archivo_excel.filename:
         candidatos.extend(_nombres_desde_excel(archivo_excel))
@@ -175,15 +170,13 @@ def _combinar_nombres(texto_nombres: str, archivo_excel) -> list[str]:
     return nombres
 
 
-# sinónimos normalizados (sin tildes, mayúsculas) que puede traer cada columna
-# en orden de prioridad -el término más específico primero. Si el Excel
-# trae varias columnas que calzan, gana la de más arriba en la lista, sin
-# importar cuál columna esté más a la izquierda.
+# sinónimos normalizados (sin tildes, mayúsculas), en orden de prioridad:
+# si el Excel trae varias columnas que calzan, gana la más específica de
+# la lista, sin importar cuál esté más a la izquierda.
 #
-# "EMPRESA" NO es sinónimo de cliente a propósito: en las planillas reales
-# de VMA esa columna es una unidad interna (ej. "Comer", "Servicios") que
-# no tiene nada que ver con a quién se le factura -incluirla como sinónimo
-# separaba el zip por esa unidad interna en vez de por el cliente real.
+# "EMPRESA" no cuenta como sinónimo de cliente a propósito: en las
+# planillas de VMA esa columna es una unidad interna (Comer, Servicios,
+# etc.) que no tiene que ver con a quién se le factura.
 _SINONIMOS_CEDULA = ["IDENTIFICACION", "CEDULA", "ID", "DOCUMENTO", "IDENTIFICACION FISCAL", "NUMERO"]
 _SINONIMOS_CLIENTE = ["CLIENTE", "CUENTA"]
 _SINONIMOS_NOMBRE = ["NOMBRE", "NOMBRES", "EMPLEADO", "COLABORADOR", "NOMBRE COMPLETO"]
@@ -196,10 +189,9 @@ def _normalizar_encabezado(valor) -> str:
 
 
 def _indice_por_sinonimos(encabezado, sinonimos: list[str]) -> int | None:
-    """Recorre 'sinonimos' en orden de prioridad (no las columnas de
-    izquierda a derecha): si el encabezado trae más de una columna que
-    calza, gana la del sinónimo más específico -ej. 'Cliente' sobre
-    'Empresa', aunque 'Empresa' esté antes en el Excel."""
+    """Recorre la lista de sinónimos en orden de prioridad, no las
+    columnas de izquierda a derecha -así 'Cliente' gana sobre 'Empresa'
+    aunque 'Empresa' venga primero en el Excel."""
     normalizados = [_normalizar_encabezado(valor) if valor else "" for valor in encabezado]
     for sinonimo in sinonimos:
         for i, valor in enumerate(normalizados):
@@ -209,9 +201,8 @@ def _indice_por_sinonimos(encabezado, sinonimos: list[str]) -> int | None:
 
 
 def _extraer_cedula_limpia(valor) -> str:
-    """Extrae únicamente los dígitos de una cédula, eliminando decimales
-    espurios que deja Excel cuando la columna quedó como celda numérica en
-    vez de texto (ej. una BUSCARV trae 303370238.0 -> '303370238')."""
+    """Solo los dígitos, quitando el .0 que deja Excel cuando la columna
+    quedó como número en vez de texto (ej. 303370238.0 -> '303370238')."""
     if valor is None:
         return ""
     if isinstance(valor, float) and valor.is_integer():
@@ -225,13 +216,12 @@ def _extraer_cedula_limpia(valor) -> str:
 
 
 def _registros_desde_excel(archivo):
-    """Si el archivo (Excel o CSV) trae una columna de cédula y una de
-    cliente (aceptando los sinónimos de _SINONIMOS_CEDULA/_SINONIMOS_CLIENTE),
-    devuelve un registro por fila. Si es de una sola columna, se asume lista
-    simple de nombres y devuelve None para que el llamador use el Modo
-    Simple. Si trae varias columnas pero ninguna calza con lo esperado,
-    mejor avisarle al usuario con un error claro que degradar en silencio
-    a Modo Simple -probablemente quiso usar Modo Cliente y algo no calzó."""
+    """Si trae columna de cédula y de cliente (con sus sinónimos), arma
+    un registro por fila para Modo Cliente. Si es de una sola columna, se
+    asume lista de nombres y devuelve None para que el llamador use Modo
+    Simple. Si tiene varias columnas pero ninguna calza, mejor un error
+    claro que degradar en silencio -seguramente el usuario quería Modo
+    Cliente y algo no calzó."""
     filas = _filas_desde_archivo(archivo)
 
     encabezado = next(filas, None)
@@ -273,9 +263,8 @@ def _registros_desde_excel(archivo):
 
 @app.route("/api/detectar-modo-excel", methods=["POST"])
 def detectar_modo_excel():
-    """Preview rápido para el frontend: le dice al usuario qué modo se va
-    a activar apenas elige el Excel, sin tener que subir los PDFs y
-    esperar el procesamiento completo para enterarse."""
+    """Preview para el frontend: qué modo se va a activar apenas se elige
+    el Excel, sin esperar a subir los PDFs y procesar todo."""
     archivo_excel = request.files.get("excel")
     if not archivo_excel or not archivo_excel.filename:
         return jsonify(error="No se recibió ningún archivo Excel."), 400
@@ -293,9 +282,8 @@ def detectar_modo_excel():
 
 
 def _nombre_zip_sin_colision(nombre: str, nombres_usados: set) -> str:
-    """Si 'nombre' ya se usó en este zip (ej. dos PDFs de origen que se
-    llamaban igual), le agrega un sufijo numérico -'Planilla_resaltado
-    (1).pdf'- para no pisar la entrada anterior."""
+    """Si el nombre ya se usó en este zip (dos PDFs de origen con el
+    mismo nombre, por ejemplo), le agrega un sufijo numérico."""
     if nombre not in nombres_usados:
         nombres_usados.add(nombre)
         return nombre
@@ -312,21 +300,21 @@ def _nombre_zip_sin_colision(nombre: str, nombres_usados: set) -> str:
 
 
 def _procesar_modo_simple(nombres: list[str], archivos):
-    """Igual que el modo cliente: el zip se manda directo por streaming
-    (send_file), sin pasar por base64 -eso duplicaba el archivo en memoria
-    (bytes + texto) y con planillas pesadas era lo que más pegaba contra
-    los 512 MB de RAM de Render. El detalle por archivo/nombre que antes
-    se mandaba en el JSON ahora va en Resumen_Modo_Simple.pdf, adentro del
-    zip; en la respuesta solo quedan los conteos, en cabeceras.
+    """Genera el zip de PDFs resaltados y lo manda por streaming
+    (send_file) en vez de base64 -con planillas pesadas eso duplicaba el
+    archivo en memoria. El detalle por archivo/nombre va dentro del zip,
+    en Resumen_Modo_Simple.pdf; la respuesta solo trae los totales, en
+    cabeceras.
 
-    El zip en sí se arma en un archivo temporal EN DISCO, no en un
-    io.BytesIO() en RAM -con lotes grandes ese buffer era otro punto donde
-    se acumulaba memoria, además de los PDFs que ya se están generando.
-    Se borra después de que la respuesta termine de enviarse."""
+    El zip se arma en un archivo temporal en disco, no en un
+    io.BytesIO() -con lotes grandes ese buffer se sumaba a la memoria que
+    ya estaban usando los PDFs generados. Se borra apenas termina de
+    enviarse la respuesta.
+    """
     coincidencias_por_archivo: dict[str, dict] = {}
     errores_por_archivo: dict[str, str] = {}
     nombres_zip_usados: set[str] = set()
-    carpeta_temporal = Path(tempfile.mkdtemp(prefix="resaltado_simple_"))  # aislado por request, se borra al final
+    carpeta_temporal = Path(tempfile.mkdtemp(prefix="resaltado_simple_"))
     archivo_zip_temporal = tempfile.NamedTemporaryFile(suffix=".zip", prefix="resaltado_simple_zip_", delete=False)
     ruta_zip = Path(archivo_zip_temporal.name)
     archivo_zip_temporal.close()
@@ -339,9 +327,8 @@ def _procesar_modo_simple(nombres: list[str], archivos):
                     errores_por_archivo[nombre_archivo] = "No es un archivo PDF."
                     continue
 
-                # prefijo por índice en disco -es común subir varios PDFs
-                # con el mismo nombre (ej. descargados de portales distintos)
-                # y sin esto el segundo pisaría al primero antes de procesarlo
+                # prefijo por índice: es común subir dos PDFs con el mismo
+                # nombre (de portales distintos) y sin esto se pisarían
                 ruta_entrada = carpeta_temporal / f"{i}_{nombre_archivo}"
                 archivo.save(ruta_entrada)
 
@@ -405,9 +392,9 @@ def _procesar_modo_simple(nombres: list[str], archivos):
 
 _FORMATOS_VALIDOS = {"auto", "ccss", "mnk", "ins"}
 
-# margen bajo el límite típico de ~8 KB por cabecera HTTP de la mayoría de
-# servidores/proxies -con un lote grande de no encontrados es mejor omitir
-# la cabecera que arriesgarse a que el proxy rechace toda la respuesta
+# margen bajo el límite típico de ~8 KB por cabecera HTTP -con un lote
+# grande de no encontrados, mejor omitir la cabecera que arriesgarse a
+# que el proxy rechace toda la respuesta
 _LIMITE_BYTES_NO_ENCONTRADOS_HEADER = 4000
 
 
@@ -426,8 +413,7 @@ def _procesar_modo_cliente(registros: list[dict], archivos, formato: str, resalt
                 pdfs_invalidos.append(nombre_archivo)
                 continue
             # prefijo por índice: es común descargar "Planilla.pdf" de
-            # varios portales (CCSS, INS...) con el mismo nombre -sin esto
-            # el segundo archivo pisaría al primero antes de procesar nada
+            # varios portales (CCSS, INS...) con el mismo nombre
             ruta = carpeta_entrada / f"{i}_{nombre_archivo}"
             archivo.save(ruta)
             rutas_entrada.append(str(ruta))
@@ -452,9 +438,7 @@ def _procesar_modo_cliente(registros: list[dict], archivos, formato: str, resalt
         ]
         errores_archivos.extend(f"{nombre}: no es un archivo PDF." for nombre in pdfs_invalidos)
 
-        # zip a disco, no a un io.BytesIO() en RAM -con muchos clientes ese
-        # buffer era otro punto donde se acumulaba memoria, aparte de los
-        # PDFs que ya se están generando (ver _procesar_modo_simple)
+        # zip a disco, no a un io.BytesIO() en RAM (ver _procesar_modo_simple)
         archivo_zip_temporal = tempfile.NamedTemporaryFile(
             suffix=".zip", prefix="resaltado_cliente_zip_", delete=False
         )
@@ -474,9 +458,7 @@ def _procesar_modo_cliente(registros: list[dict], archivos, formato: str, resalt
                 )
                 zf.writestr("Resumen.pdf", resumen_pdf)
 
-            # resumen de facturación (2 pestañas: por cliente y detalle por
-            # oficial) para que Facturación no tenga que abrir cada PDF a
-            # contar oficiales a mano
+            # para que Facturación no tenga que abrir cada PDF a contar oficiales
             resumen_excel = generar_excel_resumen(resultado["detalle_registros"])
             zf.writestr("Resumen_Facturacion.xlsx", resumen_excel)
     finally:
@@ -504,9 +486,9 @@ def _procesar_modo_cliente(registros: list[dict], archivos, formato: str, resalt
     respuesta.headers["X-Total-Errores"] = str(len(errores_archivos))
     respuesta.headers["X-Total-No-Encontrados"] = str(len(no_encontrados))
 
-    # para que el navegador pueda listar las cédulas sin abrir el zip -pero
-    # si el lote es grande y no cabe en una cabecera HTTP, mejor omitirla
-    # (igual queda el detalle completo en Resumen.pdf, dentro del zip)
+    # para que el navegador liste las cédulas sin abrir el zip -si el lote
+    # es grande y no cabe en una cabecera, mejor omitirla (igual queda en
+    # Resumen.pdf, dentro del zip)
     if no_encontrados:
         no_encontrados_b64 = base64.b64encode(json.dumps(no_encontrados).encode("utf-8")).decode("ascii")
         if len(no_encontrados_b64) <= _LIMITE_BYTES_NO_ENCONTRADOS_HEADER:
