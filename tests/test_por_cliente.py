@@ -393,6 +393,40 @@ def test_pie_de_pagina_de_cada_poliza_queda_junto_a_sus_propias_filas(tmp_path):
         documento_salida.close()
 
 
+def test_pie_de_pagina_se_comparte_entre_clientes_de_la_misma_poliza(tmp_path):
+    """El render del pie de página se cachea por archivo (para no
+    reabrirlo/re-renderizarlo por cada cliente que comparte la misma
+    póliza) -pero cada cliente igual debe llevarse su propia copia en su
+    PDF, sin que el cacheo se lo pierda ni se lo mezcle con otro."""
+    ruta_poliza = tmp_path / "poliza_compartida.pdf"
+    documento = fitz.open()
+    pagina = documento.new_page(width=595, height=842)
+    pagina.insert_text((36, 40), "EMPRESA COMPARTIDA", fontsize=13)
+    _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
+    _escribir_fila(pagina, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
+    _escribir_fila(pagina, 170, [("222222222", 90), ("MARIA", 80), ("SOLANO MORA", 100), ("Ninguna", 90)])
+    pagina.insert_text((36, 220), "TOTAL SALARIOS", fontsize=10)
+    documento.save(str(ruta_poliza))
+    documento.close()
+
+    registros = [
+        {"cedula": "111111111", "cliente": "Cliente Uno Compartido", "nombre": "Juan Perez"},
+        {"cedula": "222222222", "cliente": "Cliente Dos Compartido", "nombre": "Maria Solano"},
+    ]
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [str(ruta_poliza)], registros, str(tmp_path / "salida"), formato="ccss"
+    )
+
+    for cliente in ("Cliente Uno Compartido", "Cliente Dos Compartido"):
+        documento_salida = fitz.open(resultado["archivos_por_cliente"][cliente])
+        try:
+            total_imagenes = sum(len(p.get_images(full=True)) for p in documento_salida)
+            assert total_imagenes >= 1
+        finally:
+            documento_salida.close()
+
+
 def test_pie_de_pagina_no_se_agrega_si_el_formato_no_tiene_perfil_conocido(tmp_path):
     """Si el formato no tiene un perfil de pie de página conocido (ej.
     INS), no se agrega nada -mejor omitirlo que recortar cualquier cosa."""

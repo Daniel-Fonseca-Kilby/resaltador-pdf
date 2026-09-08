@@ -63,6 +63,33 @@ def _buscar_con_variantes(pagina, texto: str, textpage=None):
     return []
 
 
+def _todas_las_palabras_en_texto(texto_norm: str, palabras: list[str]) -> bool:
+    """¿Aparecen TODAS las palabras (o alguna de sus variantes de Ñ) en el
+    texto ya normalizado? Es la misma condición necesaria que
+    _buscar_por_fila necesita para poder encontrar una fila -sirve de
+    filtro rápido en memoria antes de llamar a search_for."""
+    if not palabras:
+        return False
+    return all(
+        any(_normalizar(v) in texto_norm for v in (palabra, *_variantes_ene(palabra)))
+        for palabra in palabras
+    )
+
+
+def _puede_aparecer_en_pagina(texto_pagina_norm: str, texto: str, palabras: list[str]) -> bool:
+    """Filtro rápido en memoria antes de llamar a search_for -que es
+    mucho más caro, sobre todo con listas de miles de nombres-: ¿aparece
+    'texto' (o todas sus palabras sueltas) en el texto ya extraído de la
+    página? Nunca da un falso negativo (son las mismas condiciones que
+    search_for necesita para encontrar algo), pero deja saltarse por
+    completo los nombres que ni siquiera están en esta página con un
+    simple 'in' de Python en vez de volver a escanear con PyMuPDF."""
+    candidatos_frase = [_normalizar(texto), *[_normalizar(v) for v in _variantes_ene(texto)]]
+    if any(c in texto_pagina_norm for c in candidatos_frase):
+        return True
+    return _todas_las_palabras_en_texto(texto_pagina_norm, palabras)
+
+
 _TOLERANCIA_FILA = 6  # puntos: cuánto pueden variar en Y las palabras de una misma fila
 
 
@@ -107,9 +134,18 @@ def resaltar_nombres_en_pdf(ruta_pdf: str, nombres: list[str], ruta_salida: str)
 
     for pagina in documento:
         textpage = pagina.get_textpage()  # se extrae 1 vez y se reusa en todas las búsquedas de la página
+        # también en memoria, una vez por página: con listas de miles de
+        # nombres, la mayoría ni siquiera está en esta página -mejor
+        # descartarlos con un 'in' de Python que con search_for de PyMuPDF
+        texto_pagina_norm = _normalizar(pagina.get_text(textpage=textpage))
+
         for nombre in nombres:
             nombre_limpio = nombre.strip()
             if not nombre_limpio:
+                continue
+
+            palabras = [p for p in nombre_limpio.split() if len(p) >= 3]
+            if not _puede_aparecer_en_pagina(texto_pagina_norm, nombre_limpio, palabras):
                 continue
 
             coincidencias = _buscar_con_variantes(pagina, nombre_limpio, textpage=textpage)
@@ -123,7 +159,6 @@ def resaltar_nombres_en_pdf(ruta_pdf: str, nombres: list[str], ruta_salida: str)
 
             # nombre completo no aparece junto -> capaz nombre/apellido
             # quedaron en columnas distintas, se busca palabra por palabra
-            palabras = [p for p in nombre_limpio.split() if len(p) >= 3]
             for fila in _buscar_por_fila(pagina, palabras, textpage=textpage):
                 for rect in fila:
                     anotacion = pagina.add_highlight_annot(rect)
@@ -427,7 +462,6 @@ def resaltar_por_cedula_y_exportar_por_cliente(
         franja: "fitz.Rect",
         resaltar: bool,
         repetir_encabezado: bool = True,
-        como_imagen: bool = False,
     ) -> None:
         escala = estado["ancho"] / pagina_origen.rect.width
         alto_bloque = franja.height * escala
@@ -446,46 +480,78 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 )
 
         destino = fitz.Rect(0, estado["y"], estado["ancho"], estado["y"] + alto_bloque)
-        if como_imagen:
-            # copia vectorial (show_pdf_page) no arrastra el valor de los
-            # campos de formulario (ej. el total de CCSS, que la Oficina
-            # Virtual rellena como widget, no como texto de la página) -acá
-            # se renderiza esa franja como imagen para llevarse tal cual se
-            # ve, con cualquier campo relleno incluido
-            pixmap = pagina_origen.get_pixmap(clip=franja, matrix=fitz.Matrix(2, 2))
-            estado["pagina"].insert_image(destino, pixmap=pixmap)
-        else:
-            estado["pagina"].show_pdf_page(destino, documento_origen, pagina_origen.number, clip=franja)
+        estado["pagina"].show_pdf_page(destino, documento_origen, pagina_origen.number, clip=franja)
         if resaltar:
             anotacion = estado["pagina"].add_highlight_annot(destino)
             anotacion.update()
         estado["y"] += alto_bloque + _ESPACIO_ENTRE_FILAS
+
+    def _agregar_imagen_cacheada(estado: dict, pixmap, ancho_original: float, alto_original: float) -> None:
+        """Como _agregar_bloque, pero para un pixmap ya renderizado de
+        antemano (ver _pixmaps_pie_de_poliza) -no necesita el documento ni
+        la página de origen abiertos, así que sirve para reusar el mismo
+        render entre varios clientes que comparten la misma póliza, sin
+        reabrir el archivo ni volver a renderizar cada vez. Nunca repite
+        el encabezado si desborda -un pie de página no lo necesita."""
+        if ancho_original <= 0:
+            return
+        escala = estado["ancho"] / ancho_original
+        alto_bloque = alto_original * escala
+        if alto_bloque <= 0:
+            return
+
+        if estado["pagina"] is None or estado["y"] + alto_bloque > estado["alto"] - _MARGEN_PAGINA:
+            estado["pagina"] = estado["documento"].new_page(width=estado["ancho"], height=estado["alto"])
+            estado["y"] = _MARGEN_PAGINA
+
+        destino = fitz.Rect(0, estado["y"], estado["ancho"], estado["y"] + alto_bloque)
+        estado["pagina"].insert_image(destino, pixmap=pixmap)
+        estado["y"] += alto_bloque + _ESPACIO_ENTRE_FILAS
+
+    pixmaps_pie_por_archivo: dict[str, list[tuple]] = {}
+
+    def _pixmaps_pie_de_poliza(ruta_pdf_saliente: str) -> list[tuple]:
+        """Renderiza el pie de página de esta póliza UNA sola vez -varios
+        clientes suelen compartir la misma póliza- y cachea el resultado,
+        para no reabrir el archivo ni volver a renderizar por cada cliente
+        que la usó. Se copia como IMAGEN (no con show_pdf_page vectorial)
+        porque el total de algunos formatos (ej. CCSS) lo rellena la
+        Oficina Virtual como un campo de formulario, no como texto de la
+        página, y show_pdf_page no arrastra el valor de esos campos."""
+        if ruta_pdf_saliente in pixmaps_pie_por_archivo:
+            return pixmaps_pie_por_archivo[ruta_pdf_saliente]
+
+        resultado: list[tuple] = []
+        try:
+            documento_pie = fitz.open(ruta_pdf_saliente)
+        except Exception:
+            pixmaps_pie_por_archivo[ruta_pdf_saliente] = resultado
+            return resultado
+        try:
+            if not documento_pie.is_encrypted:
+                ultima_pagina = documento_pie[-1]
+                ancho_pagina = ultima_pagina.rect.width
+                for franja_pie in _franjas_pie_de_pagina(ultima_pagina, formato):
+                    pixmap = ultima_pagina.get_pixmap(clip=franja_pie, matrix=fitz.Matrix(2, 2))
+                    resultado.append((pixmap, ancho_pagina, franja_pie.height))
+        except Exception:
+            pass
+        finally:
+            documento_pie.close()
+
+        pixmaps_pie_por_archivo[ruta_pdf_saliente] = resultado
+        return resultado
 
     def _agregar_pie_de_poliza(estado: dict, ruta_pdf_saliente: str) -> None:
         """Cierra la póliza que este cliente está dejando atrás con su
         propio pie de página (total + leyenda/firma si se encuentra),
         antes de pasar a la siguiente -así cada póliza termina con SU
         total, en vez de amontonar todos los totales al final del
-        documento. El archivo ya está cerrado a esta altura (se terminó
-        de procesar antes de detectar el cambio de póliza), así que se
-        reabre brevemente solo para esto."""
-        try:
-            documento_pie = fitz.open(ruta_pdf_saliente)
-        except Exception:
-            return
-        try:
-            if documento_pie.is_encrypted:
-                return
-            ultima_pagina = documento_pie[-1]
-            for franja_pie in _franjas_pie_de_pagina(ultima_pagina, formato):
-                _agregar_bloque(
-                    estado, documento_pie, ultima_pagina, franja_pie,
-                    resaltar=False, repetir_encabezado=False, como_imagen=True,
-                )
-        except Exception:
-            pass
-        finally:
-            documento_pie.close()
+        documento. El render se saca de _pixmaps_pie_de_poliza, que lo
+        cachea por archivo -si varios clientes comparten la misma póliza,
+        solo se reabre y se renderiza una vez entre todos ellos."""
+        for pixmap, ancho_pagina, alto_franja in _pixmaps_pie_de_poliza(ruta_pdf_saliente):
+            _agregar_imagen_cacheada(estado, pixmap, ancho_pagina, alto_franja)
 
     for ruta_pdf in rutas_pdfs:
         nombre_archivo = Path(ruta_pdf).name
@@ -607,7 +673,12 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 for pagina in documento:
                     textpage = pagina.get_textpage()
                     palabras_pagina = pagina.get_text("words", textpage=textpage)
+                    # filtro rápido en memoria: con cientos de pendientes,
+                    # la gran mayoría ni siquiera está en esta página
+                    texto_pagina_norm = _normalizar(pagina.get_text(textpage=textpage))
                     for clave, palabras_nombre in pendientes_por_nombre.items():
+                        if not _todas_las_palabras_en_texto(texto_pagina_norm, palabras_nombre):
+                            continue
                         for fila_rects in _buscar_por_fila(pagina, palabras_nombre, textpage=textpage):
                             fila_y0 = min(r.y0 for r in fila_rects)
                             fila_y1 = max(r.y1 for r in fila_rects)

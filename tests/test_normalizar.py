@@ -5,6 +5,8 @@ from resaltado_pdf import (
     _nombre_archivo_seguro,
     _normalizar,
     _normalizar_cedula,
+    _puede_aparecer_en_pagina,
+    _todas_las_palabras_en_texto,
     _variantes_ene,
 )
 
@@ -79,6 +81,43 @@ def test_extraer_cedula_limpia_con_guiones():
 def test_extraer_cedula_limpia_valor_vacio():
     assert _extraer_cedula_limpia(None) == ""
     assert _extraer_cedula_limpia("") == ""
+
+
+def test_todas_las_palabras_en_texto_todas_presentes():
+    texto = _normalizar("JUAN PEREZ MORA")
+    assert _todas_las_palabras_en_texto(texto, ["PEREZ", "MORA"]) is True
+
+
+def test_todas_las_palabras_en_texto_falta_una():
+    texto = _normalizar("JUAN PEREZ MORA")
+    assert _todas_las_palabras_en_texto(texto, ["PEREZ", "GONZALEZ"]) is False
+
+
+def test_todas_las_palabras_en_texto_lista_vacia():
+    assert _todas_las_palabras_en_texto(_normalizar("JUAN PEREZ"), []) is False
+
+
+def test_todas_las_palabras_en_texto_tolera_ene_como_espacio():
+    # el bug de MNK: "MUÑOZ" puede salir como "MU OZ" en el texto del PDF
+    texto = _normalizar("SOLANO MU OZ")
+    assert _todas_las_palabras_en_texto(texto, ["MUÑOZ"]) is True
+
+
+def test_puede_aparecer_en_pagina_por_frase_completa():
+    texto = _normalizar("JUAN PEREZ MORA aparece aqui")
+    assert _puede_aparecer_en_pagina(texto, "Juan Perez Mora", ["PEREZ", "MORA"]) is True
+
+
+def test_puede_aparecer_en_pagina_por_palabras_sueltas():
+    # nombre y apellido en columnas separadas -la frase completa no está
+    # junta, pero las palabras sí están todas en la página
+    texto = _normalizar("JUAN   PEREZ MORA")
+    assert _puede_aparecer_en_pagina(texto, "Juan Perez Mora", ["JUAN", "PEREZ", "MORA"]) is True
+
+
+def test_puede_aparecer_en_pagina_ausente():
+    texto = _normalizar("MARIA LOPEZ SOLANO")
+    assert _puede_aparecer_en_pagina(texto, "Juan Perez Mora", ["JUAN", "PEREZ", "MORA"]) is False
 
 
 def test_indice_por_sinonimos_prefiere_termino_mas_especifico():
