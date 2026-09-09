@@ -663,6 +663,15 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 ultimo_indice = documento_pie.page_count - 1
                 num_a_revisar = min(6, documento_pie.page_count)
 
+                # el total y la leyenda se agregan en el orden en que de
+                # verdad aparecen en el documento original -no siempre es
+                # "total primero, leyenda después": cuando MNK repite el
+                # total al principio de una página de aviso legal/datos de
+                # contacto, esa página viene DESPUÉS de la que trae
+                # "CODIFICACIÓN" (con la firma), así que hay que ordenar por
+                # número de página real, no por un orden fijo.
+                bloques_pie: list[tuple[int, float, tuple]] = []
+
                 pagina_total = franja_total = None
                 for indice in range(ultimo_indice, ultimo_indice - num_a_revisar, -1):
                     candidata = documento_pie[indice]
@@ -680,7 +689,10 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                         except Exception:
                             pass
                     pixmap = pagina_total.get_pixmap(clip=franja_total, matrix=fitz.Matrix(2, 2))
-                    resultado.append((pixmap.tobytes("png"), pagina_total.rect.width, franja_total.height))
+                    bloques_pie.append((
+                        pagina_total.number, franja_total.y0,
+                        (pixmap.tobytes("png"), pagina_total.rect.width, franja_total.height),
+                    ))
 
                 pagina_leyenda = franja_leyenda = None
                 for indice in range(ultimo_indice, ultimo_indice - num_a_revisar, -1):
@@ -700,7 +712,13 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                         franja_leyenda, franja_total, misma_pagina,
                     )
                     pixmap = pagina_leyenda.get_pixmap(clip=franja_leyenda, matrix=fitz.Matrix(2, 2))
-                    resultado.append((pixmap.tobytes("png"), pagina_leyenda.rect.width, franja_leyenda.height))
+                    bloques_pie.append((
+                        pagina_leyenda.number, franja_leyenda.y0,
+                        (pixmap.tobytes("png"), pagina_leyenda.rect.width, franja_leyenda.height),
+                    ))
+
+                bloques_pie.sort(key=lambda b: (b[0], b[1]))
+                resultado.extend(bloque for _pagina, _y0, bloque in bloques_pie)
 
                 # respaldo: en algunos PDFs reales el texto del total y de
                 # "CODIFICACIÓN" no se puede encontrar con search_for (por

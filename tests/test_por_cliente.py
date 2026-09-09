@@ -603,11 +603,25 @@ def test_pie_de_pagina_cuando_el_total_se_repite_en_hoja_de_aviso_legal(tmp_path
 
     documento_salida = fitz.open(resultado["archivos_por_cliente"]["Cliente Dos Hojas"])
     try:
-        total_imagenes = sum(len(p.get_images(full=True)) for p in documento_salida)
+        imagenes = [xref for p in documento_salida for xref, *_r in p.get_images(full=True)]
         # una imagen para el total (de la hoja de aviso, la última donde
         # aparece) y una para la leyenda (de la hoja de datos, la única
         # con "CODIFICACIÓN") -nunca deben salir tres o más
-        assert total_imagenes == 2
+        assert len(imagenes) == 2
+
+        # la de "CODIFICACIÓN" (con la firma) viene de la PRIMERA página del
+        # original (pagina_datos, índice 0); la del total repetido viene de
+        # la SEGUNDA (pagina_aviso, índice 1) -aunque el bloque del total se
+        # calcule primero en el código, en la salida debe listarse después
+        # de la leyenda, respetando el orden real de las páginas. Como la
+        # franja de la leyenda llega hasta el fondo de la hoja (mucho más
+        # alta que la del total, que es solo el renglón), se distinguen por
+        # su alto.
+        alturas = [fitz.Pixmap(documento_salida.extract_image(xref)["image"]).height for xref in imagenes]
+        assert alturas[0] > alturas[1], (
+            "la leyenda (más alta, de la página 1) debe ir antes que el total repetido "
+            "(más bajo, de la página 2) -no al revés"
+        )
     finally:
         documento_salida.close()
 
