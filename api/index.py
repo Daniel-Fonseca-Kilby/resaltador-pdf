@@ -472,7 +472,6 @@ def _procesar_modo_cliente(registros: list[dict], archivos, formato: str, resalt
 
         no_encontrados = [
             f"{r['nombre'] or 'sin nombre'} (cédula {r['cedula']}, cliente {r['cliente']})"
-            + (f" - {r['motivo_no_rescatado']}" if r.get("motivo_no_rescatado") else "")
             for r in resultado["no_encontrados"]
         ]
         errores_archivos = [

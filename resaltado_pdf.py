@@ -472,9 +472,10 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     real de la persona.
 
     A los registros que aun así no calzan (sin número de asegurado, o
-    tampoco calzó) se les hace una segunda pasada buscándolos por nombre
-    completo. Solo se acepta si el nombre aparece en exactamente una fila
-    de todo el lote y esa fila no es ya de otro empleado conocido.
+    tampoco calzó) se reportan como no encontrados -no se busca por nombre
+    completo: con dos identificadores numéricos ya cubriendo los casos
+    reales conocidos, un rescate por nombre solo agrega falsos negativos
+    (más números conocidos = más choques por coincidencia entre filas).
 
     Al cerrar cada póliza se le agrega su propio pie de página (el total
     y, si aparece, la leyenda con la firma) tal cual sale en el original
@@ -690,8 +691,13 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                         break
 
                 if pagina_leyenda is not None:
+                    # ojo: NO comparar con "is" -- documento[indice] crea un
+                    # objeto Page nuevo cada vez, así que dos llamadas para
+                    # la MISMA página nunca son el mismo objeto. Hay que
+                    # comparar el número de página real.
+                    misma_pagina = pagina_total is not None and pagina_leyenda.number == pagina_total.number
                     franja_leyenda = _recortar_leyenda_tras_total(
-                        franja_leyenda, franja_total, pagina_leyenda is pagina_total,
+                        franja_leyenda, franja_total, misma_pagina,
                     )
                     pixmap = pagina_leyenda.get_pixmap(clip=franja_leyenda, matrix=fitz.Matrix(2, 2))
                     resultado.append((pixmap.tobytes("png"), pagina_leyenda.rect.width, franja_leyenda.height))
@@ -885,144 +891,15 @@ def resaltar_por_cedula_y_exportar_por_cliente(
         finally:
             documento.close()
 
-    # segunda pasada: a los que no calzaron por cédula se les busca el
-    # nombre completo. Solo se acepta si aparece en exactamente una fila
-    # de todo el lote y esa fila no tiene ya la cédula de otro empleado
-    encontrados_por_nombre: set = set()
-    # clave -> por qué la segunda pasada no lo rescató (nombre ambiguo, y
-    # dónde); si no aparece acá y tampoco se encontró, es que ni siquiera
-    # apareció el nombre en ninguna página
-    motivos_no_rescatado: dict[tuple[str, str], str] = {}
-    pendientes_por_nombre: dict[tuple[str, str], list[str]] = {}
-    for clave, datos in registros_unicos.items():
-        if polizas_encontradas.get(clave):
-            continue
-        palabras_nombre = [p for p in _normalizar(datos.get("nombre") or "").split() if len(p) >= 3]
-        if len(palabras_nombre) >= 2:
-            pendientes_por_nombre[clave] = palabras_nombre
-
-    if pendientes_por_nombre:
-        candidatos_por_pendiente: dict[tuple[str, str], list[tuple[str, int, tuple]]] = {}
-        for ruta_pdf in rutas_pdfs:
-            try:
-                documento = fitz.open(ruta_pdf)
-            except Exception:
-                continue
-            if documento.is_encrypted:
-                documento.close()
-                continue
-            try:
-                for pagina in documento:
-                    textpage = pagina.get_textpage()
-                    palabras_pagina = pagina.get_text("words", textpage=textpage)
-                    texto_pagina_norm = _normalizar(pagina.get_text(textpage=textpage))
-                    for clave, palabras_nombre in pendientes_por_nombre.items():
-                        if not _todas_las_palabras_en_texto(texto_pagina_norm, palabras_nombre):
-                            continue
-                        for fila_rects in _buscar_por_fila(pagina, palabras_nombre, textpage=textpage):
-                            fila_y0 = min(r.y0 for r in fila_rects)
-                            fila_y1 = max(r.y1 for r in fila_rects)
-
-                            cedula_de_la_fila = None
-                            for wx0, wy0, wx1, wy1, wpalabra, *_resto in palabras_pagina:
-                                if abs(wy0 - fila_y0) > _TOLERANCIA_FILA:
-                                    continue
-                                wdigitos = "".join(c for c in wpalabra if c.isdigit())
-                                if not wdigitos:
-                                    continue
-                                wclave_cedula = _normalizar_cedula(wdigitos)
-                                if wclave_cedula not in mapa_cedulas and len(wdigitos) > 1:
-                                    wclave_cedula = _normalizar_cedula(wdigitos[1:])
-                                if wclave_cedula in mapa_cedulas:
-                                    # puede ser el número de asegurado de
-                                    # ESE otro empleado, no su cédula -se
-                                    # resuelve a su cédula real antes de
-                                    # comparar
-                                    cedula_de_la_fila = mapa_id_a_cedula_real.get(wclave_cedula, wclave_cedula)
-                                    break
-                            if cedula_de_la_fila is not None and cedula_de_la_fila != clave[0]:
-                                continue  # esa fila ya es de otro empleado conocido
-
-                            franja = fitz.Rect(pagina.rect.x0, fila_y0 - 2, pagina.rect.x1, fila_y1 + 2)
-                            candidatos_por_pendiente.setdefault(clave, []).append(
-                                (ruta_pdf, pagina.number, (franja.x0, franja.y0, franja.x1, franja.y1))
-                            )
-            except Exception:
-                pass
-            finally:
-                documento.close()
-
-        for clave, candidatos in candidatos_por_pendiente.items():
-            if len(candidatos) != 1:
-                # ambiguo: no se arriesga, pero se deja registrado el motivo
-                # exacto (y dónde) para que no quede como un simple "no
-                # encontrado" sin explicación
-                ubicaciones = ", ".join(
-                    f"{Path(ruta).name} pág. {pagina_num + 1}" for ruta, pagina_num, _coords in candidatos
-                )
-                motivos_no_rescatado[clave] = f"nombre ambiguo -{len(candidatos)} coincidencias: {ubicaciones}"
-                continue
-            ruta_pdf_ganador, numero_pagina, coords = candidatos[0]
-            cliente = clave[1]
-
-            # si el cliente ya usó esa póliza y no es la que tiene abierta
-            # ahora mismo, reabrirla la duplicaría al final del documento
-            estado_previo = estado_por_cliente.get(cliente)
-            archivo_actual_previo = estado_previo["archivo_actual"] if estado_previo else None
-            usados_por_este_cliente = archivos_usados_por_cliente.get(cliente, set())
-            if ruta_pdf_ganador in usados_por_este_cliente and ruta_pdf_ganador != archivo_actual_previo:
-                motivos_no_rescatado[clave] = (
-                    f"nombre encontrado en {Path(ruta_pdf_ganador).name} pág. {numero_pagina + 1}, "
-                    "pero esa póliza ya se había cerrado para este cliente -no se reabre para no duplicar"
-                )
-                continue
-
-            franja = fitz.Rect(*coords)
-
-            try:
-                documento_ganador = fitz.open(ruta_pdf_ganador)
-            except Exception:
-                continue
-            try:
-                pagina_ganadora = documento_ganador[numero_pagina]
-                estado = _obtener_estado(cliente, pagina_ganadora)
-
-                primera_pagina_ganadora = documento_ganador[0]
-                techo_ganador = _techo_de_datos(primera_pagina_ganadora, formato)
-                encabezado_ganador = None
-                if techo_ganador is not None and techo_ganador > 4:
-                    encabezado_ganador = {
-                        "documento": documento_ganador,
-                        "pagina": primera_pagina_ganadora,
-                        "franja": fitz.Rect(
-                            primera_pagina_ganadora.rect.x0, 0, primera_pagina_ganadora.rect.x1, techo_ganador - 2
-                        ),
-                    }
-                estado["encabezado_actual"] = encabezado_ganador
-
-                if estado["archivo_actual"] != ruta_pdf_ganador:
-                    if estado["archivo_actual"] is not None:
-                        _agregar_pie_de_poliza(estado, estado["archivo_actual"])
-                        _flush_a_disco(estado)
-                    estado["pagina"] = None
-                    estado["archivo_actual"] = ruta_pdf_ganador
-                    if encabezado_ganador is not None:
-                        _agregar_bloque(
-                            estado, encabezado_ganador["documento"], encabezado_ganador["pagina"],
-                            encabezado_ganador["franja"], resaltar=False, repetir_encabezado=False,
-                        )
-
-                _agregar_bloque(estado, documento_ganador, pagina_ganadora, franja, resaltar=resaltar_filas)
-
-                polizas_encontradas.setdefault(clave, set()).add(Path(ruta_pdf_ganador).name)
-                archivos_usados_por_cliente.setdefault(cliente, set()).add(ruta_pdf_ganador)
-                encontrados_por_nombre.add(clave)
-            finally:
-                documento_ganador.close()
-
-    for clave in pendientes_por_nombre:
-        if clave not in encontrados_por_nombre and clave not in motivos_no_rescatado:
-            motivos_no_rescatado[clave] = "nombre no aparece en ninguna página de los PDFs de este lote"
+    # Nota: hubo una segunda pasada que buscaba por nombre completo a los
+    # que no calzaban por cédula/número de asegurado. Se quitó -con el
+    # número de asegurado ya cubriendo el caso real (extranjeros que la
+    # CCSS imprime bajo ese número), el rescate por nombre solo agregaba
+    # falsos negativos: entre más identificadores conocidos hay (cédulas +
+    # números de asegurado), más fácil es que la fila de un candidato por
+    # nombre "choque" por coincidencia con el número de asegurado de OTRO
+    # empleado y se descarte el rescate por error. Mejor una sola pasada
+    # confiable por número que una segunda pasada ambigua por nombre.
 
     for estado in estado_por_cliente.values():
         if estado["archivo_actual"] is not None:
@@ -1045,24 +922,17 @@ def resaltar_por_cedula_y_exportar_por_cliente(
             "numero_asegurado": datos.get("numero_asegurado", ""),
             "polizas": polizas,
             "encontrado": encontrado,
-            # "cedula": calzó por número; "numero_asegurado": la CCSS lo
-            # imprime bajo su número de asegurado en vez del DIMEX (normal
-            # en extranjeros, no hace falta revisarlo); "nombre": rescatado
-            # en la segunda pasada (ese sí conviene revisarlo); None: no se
-            # encontró
+            # "cedula": calzó por número de identificación; "numero_asegurado":
+            # la CCSS lo imprime bajo su número de asegurado en vez del DIMEX
+            # (normal en extranjeros, no hace falta revisarlo); None: no se
+            # encontró por ninguno de los dos
             "encontrado_por": (
-                "nombre" if clave in encontrados_por_nombre
-                else "numero_asegurado" if clave in encontrados_por_numero_asegurado
-                else "cedula"
+                "numero_asegurado" if clave in encontrados_por_numero_asegurado else "cedula"
             ) if encontrado else None,
-            "motivo_no_rescatado": motivos_no_rescatado.get(clave),
         })
 
     no_encontrados = [
-        {
-            "cedula": d["cedula"], "cliente": d["cliente"], "nombre": d["nombre"],
-            "motivo_no_rescatado": d["motivo_no_rescatado"],
-        }
+        {"cedula": d["cedula"], "cliente": d["cliente"], "nombre": d["nombre"]}
         for d in detalle_registros if not d["encontrado"]
     ]
 
@@ -1142,10 +1012,9 @@ def generar_excel_resumen(detalle_registros: list[dict]) -> bytes:
     resaltar_por_cedula_y_exportar_por_cliente bajo esa misma llave: un
     dict por cada (cédula, cliente) único, con cedula, nombre, cliente,
     numero_asegurado (vacío salvo extranjeros), polizas (archivos donde se
-    encontró), encontrado y encontrado_por ("cedula", "numero_asegurado",
-    "nombre" o None -"nombre" significa que se rescató en la segunda
-    pasada y conviene revisarlo; "numero_asegurado" es el caso normal de
-    un extranjero, no hace falta revisarlo).
+    encontró), encontrado y encontrado_por ("cedula", "numero_asegurado" o
+    None -"numero_asegurado" es el caso normal de un extranjero, no hace
+    falta revisarlo).
 
     Pestaña 1 (Resumen por Cliente): una fila por cliente con el total de
     oficiales listos para cobrar, cuántos faltan y en qué pólizas
@@ -1196,9 +1065,7 @@ def generar_excel_resumen(detalle_registros: list[dict]) -> bytes:
         "Póliza / Archivo de Origen", "¿Aparece en Planilla?",
     ])
     for d in sorted(detalle_registros, key=lambda d: (d["cliente"], d["cedula"])):
-        if d.get("encontrado_por") == "nombre":
-            estado_fila = "✅ Sí (por nombre -revisar)"
-        elif d.get("encontrado_por") == "numero_asegurado":
+        if d.get("encontrado_por") == "numero_asegurado":
             estado_fila = "✅ Sí (por número de asegurado)"
         elif d["encontrado"]:
             estado_fila = "✅ Sí"
