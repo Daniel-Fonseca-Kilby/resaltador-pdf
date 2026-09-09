@@ -626,7 +626,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
         try:
             if not documento_pie.is_encrypted:
                 ultimo_indice = documento_pie.page_count - 1
-                num_a_revisar = min(3, documento_pie.page_count)
+                num_a_revisar = min(6, documento_pie.page_count)
 
                 pagina_total = franja_total = None
                 for indice in range(ultimo_indice, ultimo_indice - num_a_revisar, -1):
@@ -699,22 +699,28 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                             pixmap = pagina_cierre.get_pixmap(clip=franja_cierre, matrix=fitz.Matrix(2, 2))
                             resultado.append((pixmap.tobytes("png"), pagina_cierre.rect.width, franja_cierre.height))
 
-                        # si la hoja siguiente no tiene ninguna fila de
-                        # empleado, es una continuación (aviso legal/pie
-                        # de contacto) -se copia completa
-                        siguiente_indice = indice_cierre + 1
-                        if siguiente_indice < documento_pie.page_count:
+                        # todas las hojas que sigan y que NO tengan
+                        # ninguna fila de empleado son continuación del
+                        # cierre (firma, aviso legal, datos de contacto)
+                        # -pueden ser una o varias, se copian TODAS,
+                        # completas y en orden, para no perder ninguna ni
+                        # mezclar el orden en el que aparecen en el
+                        # original
+                        for siguiente_indice in range(indice_cierre + 1, documento_pie.page_count):
                             pagina_siguiente = documento_pie[siguiente_indice]
-                            if not _y0s_anclas_fila(pagina_siguiente) and pagina_siguiente.get_text().strip():
-                                for widget in pagina_siguiente.widgets() or []:
-                                    try:
-                                        widget.update()
-                                    except Exception:
-                                        pass
-                                pixmap = pagina_siguiente.get_pixmap(matrix=fitz.Matrix(2, 2))
-                                resultado.append((
-                                    pixmap.tobytes("png"), pagina_siguiente.rect.width, pagina_siguiente.rect.height,
-                                ))
+                            if _y0s_anclas_fila(pagina_siguiente):
+                                break  # ya empezó otra sección con filas de empleado
+                            if not pagina_siguiente.get_text().strip():
+                                continue  # hoja realmente en blanco, se salta
+                            for widget in pagina_siguiente.widgets() or []:
+                                try:
+                                    widget.update()
+                                except Exception:
+                                    pass
+                            pixmap = pagina_siguiente.get_pixmap(matrix=fitz.Matrix(2, 2))
+                            resultado.append((
+                                pixmap.tobytes("png"), pagina_siguiente.rect.width, pagina_siguiente.rect.height,
+                            ))
         except Exception:
             pass
         finally:
