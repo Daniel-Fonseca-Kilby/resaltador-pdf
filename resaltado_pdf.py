@@ -267,12 +267,17 @@ def _techo_de_datos(pagina, formato: str = "auto", textpage=None) -> float | Non
         if techo is not None:
             # en tablas con filas muy apretadas, el margen fijo de
             # _techo_por_anclas (+14) puede pasarse de largo y arrastrar
-            # la primera fila de datos real -si la primera cédula de la
-            # página está más arriba que ese techo, se recorta justo
-            # antes de ella
+            # la primera fila de datos real -se recorta justo antes de
+            # ella. Pero solo cuenta un ancla que esté DESPUÉS del propio
+            # título de columnas (dentro de ese margen de 14pt), nunca
+            # antes -en CCSS, por ejemplo, el número patronal de la parte
+            # de arriba del documento también tiene 9+ dígitos, y no es
+            # una fila de empleado.
+            techo_crudo = techo - 14  # y1 real del título, sin el margen
             y0s_filas = _y0s_anclas_fila(pagina, textpage=textpage)
-            if y0s_filas and techo > y0s_filas[0] - 2:
-                techo = y0s_filas[0] - 2
+            candidatas = [y for y in y0s_filas if techo_crudo < y < techo]
+            if candidatas:
+                techo = candidatas[0] - 2
             return techo
 
     for estrategia in ("lines_strict", "lines", "text"):

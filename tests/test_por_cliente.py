@@ -650,6 +650,26 @@ def test_recortar_leyenda_tras_total_no_toca_franja_que_no_se_superpone():
     assert recortada_paginas_distintas == franja_leyenda_superpuesta
 
 
+def test_techo_de_datos_no_confunde_numero_patronal_con_primera_fila():
+    """En CCSS, el número patronal (arriba del todo, ANTES del título de
+    columnas) también tiene 9+ dígitos -no debe confundirse con la
+    primera fila de un empleado ni recortar el encabezado de más de lo
+    debido."""
+    documento = fitz.open()
+    pagina = documento.new_page(width=595, height=842)
+    pagina.insert_text((36, 30), "PLANILLA MENSUAL", fontsize=13)
+    # número patronal, con guiones, arriba del título de columnas
+    pagina.insert_text((36, 60), "2-03101682626-001-001", fontsize=10)
+    _escribir_fila(pagina, 100, [("APELLIDOS Y NOMBRES", 200), ("OBSERVACIONES", 100)])
+
+    techo = _techo_de_datos(pagina, formato="ccss")
+
+    assert techo is not None
+    # debe quedar cerca del título de columnas (y=100), no arriba, cerca
+    # del número patronal (y=60)
+    assert techo > 90
+
+
 def test_encabezado_no_arrastra_la_primera_fila_de_datos_si_esta_muy_pegada(tmp_path):
     """Si la primera fila de datos de la página queda muy pegada al
     encabezado (menos que el margen fijo que usa _techo_de_datos), el
