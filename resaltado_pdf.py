@@ -86,7 +86,13 @@ def _puede_aparecer_en_pagina(texto_pagina_norm: str, texto: str, palabras: list
     return _todas_las_palabras_en_texto(texto_pagina_norm, palabras)
 
 
-_TOLERANCIA_FILA = 6  # variación en Y (puntos) tolerada para considerar la misma fila
+_TOLERANCIA_FILA = 3  # variación en Y (puntos) tolerada para considerar la misma fila
+# (medido contra un PDF real de MNK: filas de empleados distintos pueden
+# quedar a solo 4-5pt una de otra cuando comparten el mismo puesto largo
+# envuelto a dos líneas -ej. "Guardias de protección"-, así que un margen
+# más ancho termina agarrando el nombre o salario de la persona de al
+# lado. Mejor perder alguna palabra de un puesto envuelto que mezclar
+# datos de otro empleado en el PDF de un cliente.)
 
 
 def _limites_fila_por_anclas_vecinas(
@@ -645,15 +651,19 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 textpage = pagina.get_textpage()
                 palabras = pagina.get_text("words", textpage=textpage)
 
-                # Y de todas las cédulas conocidas en esta página, para usar
-                # como techo/piso natural entre filas (ver
-                # _limites_fila_por_anclas_vecinas) -más confiable que un
-                # margen fijo en tablas con filas apretadas o con un puesto
-                # largo que se envuelve a dos líneas
+                # Y de toda palabra con forma de cédula/identificación en
+                # esta página (9+ dígitos seguidos, sin importar si esa
+                # persona está en el Excel de este cliente o no -la póliza
+                # completa trae empleados de otros clientes también), para
+                # usar como techo/piso natural entre filas (ver
+                # _limites_fila_por_anclas_vecinas). No se filtra contra
+                # mapa_cedulas: si solo contáramos las cédulas que SÍ están
+                # en este Excel, las filas de empleados de otros clientes
+                # -que son la mayoría en una póliza grande- no cuentan como
+                # vecinas y no habría nada contra qué recortar.
                 y0s_cedulas_pagina = sorted({
                     w[1] for w in palabras
-                    if "".join(c for c in w[4] if c.isdigit())
-                    and _coincide_cliente("".join(c for c in w[4] if c.isdigit()), mapa_cedulas)
+                    if len("".join(c for c in w[4] if c.isdigit())) >= 9
                 })
 
                 franjas_vistas: dict[str, list] = {}
