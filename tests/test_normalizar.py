@@ -2,6 +2,7 @@
 from api.index import _extraer_cedula_limpia, _indice_por_sinonimos
 from resaltado_pdf import (
     _coincide_cliente,
+    _limites_fila_por_anclas_vecinas,
     _nombre_archivo_seguro,
     _normalizar,
     _normalizar_cedula,
@@ -143,3 +144,31 @@ def test_nombre_archivo_seguro_limpia_caracteres_invalidos():
 
 def test_nombre_archivo_seguro_vacio_usa_valor_por_defecto():
     assert _nombre_archivo_seguro("   ") == "SIN_CLIENTE"
+
+
+def test_limites_fila_por_anclas_vecinas_con_anterior_y_siguiente():
+    # cédulas vecinas a Y=100 (anterior) y Y=140 (siguiente) de la fila en Y=120
+    superior, inferior = _limites_fila_por_anclas_vecinas(120, [100, 120, 140])
+    assert superior == 110  # punto medio entre 100 y 120
+    assert inferior == 130  # punto medio entre 120 y 140
+
+
+def test_limites_fila_por_anclas_vecinas_solo_anterior():
+    # es la última fila de la página -no hay ancla siguiente que la limite
+    superior, inferior = _limites_fila_por_anclas_vecinas(140, [100, 120, 140])
+    assert superior == 130
+    assert inferior is None
+
+
+def test_limites_fila_por_anclas_vecinas_solo_siguiente():
+    # es la primera fila de la página -no hay ancla anterior
+    superior, inferior = _limites_fila_por_anclas_vecinas(100, [100, 120, 140])
+    assert superior is None
+    assert inferior == 110
+
+
+def test_limites_fila_por_anclas_vecinas_sin_vecinas():
+    # única cédula de la página -no hay nada que la limite por ningún lado
+    superior, inferior = _limites_fila_por_anclas_vecinas(120, [120])
+    assert superior is None
+    assert inferior is None

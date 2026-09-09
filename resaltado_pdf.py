@@ -89,6 +89,23 @@ def _puede_aparecer_en_pagina(texto_pagina_norm: str, texto: str, palabras: list
 _TOLERANCIA_FILA = 6  # variación en Y (puntos) tolerada para considerar la misma fila
 
 
+def _limites_fila_por_anclas_vecinas(
+    y0_objetivo: float, y0s_anclas_pagina: list[float],
+) -> tuple[float | None, float | None]:
+    """Punto medio hacia el ancla anterior y hacia la siguiente en la
+    página (ambas ordenadas), para usar como techo/piso seguro de una
+    fila -en tablas con filas muy apretadas, o con una celda que se
+    envuelve a dos líneas (ej. un puesto largo como "Guardias de
+    protección"), el margen fijo de _TOLERANCIA_FILA puede arrastrar una
+    palabra de la fila de al lado. Devuelve (None, None) si no hay ancla
+    vecina de ese lado."""
+    anteriores = [y for y in y0s_anclas_pagina if y < y0_objetivo]
+    siguientes = [y for y in y0s_anclas_pagina if y > y0_objetivo]
+    limite_superior = (anteriores[-1] + y0_objetivo) / 2 if anteriores else None
+    limite_inferior = (y0_objetivo + siguientes[0]) / 2 if siguientes else None
+    return limite_superior, limite_inferior
+
+
 def _buscar_por_fila(pagina, palabras: list[str], textpage=None):
     """Busca cada palabra por separado y agrupa las que caen en la misma
     fila -para cuando nombre y apellido quedan en columnas distintas."""
@@ -628,6 +645,17 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 textpage = pagina.get_textpage()
                 palabras = pagina.get_text("words", textpage=textpage)
 
+                # Y de todas las cédulas conocidas en esta página, para usar
+                # como techo/piso natural entre filas (ver
+                # _limites_fila_por_anclas_vecinas) -más confiable que un
+                # margen fijo en tablas con filas apretadas o con un puesto
+                # largo que se envuelve a dos líneas
+                y0s_cedulas_pagina = sorted({
+                    w[1] for w in palabras
+                    if "".join(c for c in w[4] if c.isdigit())
+                    and _coincide_cliente("".join(c for c in w[4] if c.isdigit()), mapa_cedulas)
+                })
+
                 franjas_vistas: dict[str, list] = {}
                 for x0, y0, x1, y1, palabra, *_resto in palabras:
                     digitos = "".join(c for c in palabra if c.isdigit())
@@ -642,6 +670,13 @@ def resaltar_por_cedula_y_exportar_por_cliente(
 
                     fila_y0 = min(w[1] for w in palabras if abs(w[1] - y0) <= _TOLERANCIA_FILA)
                     fila_y1 = max(w[3] for w in palabras if abs(w[1] - y0) <= _TOLERANCIA_FILA)
+
+                    limite_superior, limite_inferior = _limites_fila_por_anclas_vecinas(y0, y0s_cedulas_pagina)
+                    if limite_superior is not None:
+                        fila_y0 = max(fila_y0, limite_superior)
+                    if limite_inferior is not None:
+                        fila_y1 = min(fila_y1, limite_inferior)
+
                     franja = fitz.Rect(pagina.rect.x0, fila_y0 - 2, pagina.rect.x1, fila_y1 + 2)
 
                     for cliente in clientes:
