@@ -4,9 +4,11 @@ from pathlib import Path
 import pymupdf as fitz
 
 from resaltado_pdf import (
+    _extender_leyenda_para_incluir_total,
+    _franja_leyenda_en_pagina,
     _franja_total_en_pagina,
     _franjas_pie_de_pagina,
-    _recortar_leyenda_tras_total,
+    _recortar_total_antes_de_leyenda,
     _techo_de_datos,
     resaltar_por_cedula_y_exportar_por_cliente,
 )
@@ -626,37 +628,147 @@ def test_pie_de_pagina_cuando_el_total_se_repite_en_hoja_de_aviso_legal(tmp_path
         documento_salida.close()
 
 
-def test_recortar_leyenda_tras_total_evita_arrastrar_el_total_de_nuevo():
-    """En MNK la barra de "CODIFICACIÓN" viene pegada justo debajo de la
-    del total, casi sin espacio -si las dos caen en la misma página, el
-    margen fijo de la leyenda alcanza a comerse otra vez el total que ya
-    se capturó por separado. Debe recortarse para empezar justo donde
-    termina el total."""
+def test_extender_leyenda_para_incluir_total_agrega_el_total_completo_arriba():
+    """En MNK "CODIFICACIÓN" a veces viene tan pegada al total que no hay
+    margen seguro para separarlos sin arriesgarse a cortar algo -en vez de
+    intentar una división perfecta, se prefiere que la leyenda vuelva a
+    incluir el total completo en su propio techo (el total ya se agregó
+    también como su propio bloque aparte): mejor que se vea duplicado a
+    que falte contenido. Así pedido explícitamente por VMA."""
     franja_total = fitz.Rect(0, 200, 595, 248)
-    franja_leyenda_superpuesta = fitz.Rect(0, 215, 595, 800)
+    franja_leyenda = fitz.Rect(0, 215, 595, 800)
 
-    recortada = _recortar_leyenda_tras_total(franja_leyenda_superpuesta, franja_total, misma_pagina=True)
+    extendida = _extender_leyenda_para_incluir_total(franja_leyenda, franja_total, misma_pagina=True)
 
-    assert recortada.y0 == franja_total.y1
-    assert recortada.y1 == franja_leyenda_superpuesta.y1
+    assert extendida.y0 == franja_total.y0
+    assert extendida.y1 == franja_leyenda.y1
 
 
-def test_recortar_leyenda_tras_total_no_toca_franja_que_no_se_superpone():
-    """Si el total y la leyenda están bien separados (o en páginas
-    distintas), no hay nada que recortar."""
+def test_extender_leyenda_para_incluir_total_no_toca_franja_que_ya_lo_incluye():
+    """Si la leyenda ya arrancaba antes que el total (o están en páginas
+    distintas), no hay nada que extender."""
     franja_total = fitz.Rect(0, 200, 595, 248)
-    franja_leyenda_separada = fitz.Rect(0, 300, 595, 800)
+    franja_leyenda_ya_incluye_el_total = fitz.Rect(0, 190, 595, 800)
 
-    recortada = _recortar_leyenda_tras_total(franja_leyenda_separada, franja_total, misma_pagina=True)
-    assert recortada == franja_leyenda_separada
-
-    # aunque se superpongan en coordenadas, si vienen de páginas distintas
-    # no tiene sentido recortar una contra la otra
-    franja_leyenda_superpuesta = fitz.Rect(0, 215, 595, 800)
-    recortada_paginas_distintas = _recortar_leyenda_tras_total(
-        franja_leyenda_superpuesta, franja_total, misma_pagina=False
+    extendida = _extender_leyenda_para_incluir_total(
+        franja_leyenda_ya_incluye_el_total, franja_total, misma_pagina=True
     )
-    assert recortada_paginas_distintas == franja_leyenda_superpuesta
+    assert extendida == franja_leyenda_ya_incluye_el_total
+
+    # en páginas distintas tampoco tiene sentido extender una contra la otra
+    franja_leyenda_otra_pagina = fitz.Rect(0, 215, 595, 800)
+    extendida_paginas_distintas = _extender_leyenda_para_incluir_total(
+        franja_leyenda_otra_pagina, franja_total, misma_pagina=False
+    )
+    assert extendida_paginas_distintas == franja_leyenda_otra_pagina
+
+
+def test_recortar_total_antes_de_leyenda_evita_tragarse_la_codificacion():
+    """Caso real de MNK: "CODIFICACIÓN" viene pegada casi sin espacio bajo
+    el total -el margen fijo de abajo del total (_MARGEN_ABAJO_TOTAL, 26pt)
+    se pasa de largo y termina capturando la barra de "CODIFICACIÓN" entera
+    dentro del recorte del total, dejándola faltante en el de la leyenda.
+    Debe recortarse el total para que pare justo donde arranca la leyenda."""
+    # el total "crudo" (con su margen fijo de 26pt) alcanza hasta y=239,
+    # pero la leyenda arranca en y=220 -mucho antes de que el margen del
+    # total termine
+    franja_total_con_margen_generoso = fitz.Rect(0, 190, 842, 239)
+    franja_leyenda = fitz.Rect(0, 220, 842, 595)
+
+    recortada = _recortar_total_antes_de_leyenda(franja_total_con_margen_generoso, franja_leyenda, misma_pagina=True)
+
+    assert recortada.y1 == franja_leyenda.y0
+    assert recortada.y0 == franja_total_con_margen_generoso.y0  # nunca toca su propio inicio
+
+
+def test_recortar_total_antes_de_leyenda_no_toca_franja_que_no_se_superpone():
+    """Si el margen del total ya paraba antes de donde arranca la leyenda,
+    no hay nada que recortar."""
+    franja_total = fitz.Rect(0, 190, 842, 210)
+    franja_leyenda = fitz.Rect(0, 220, 842, 595)
+
+    recortada = _recortar_total_antes_de_leyenda(franja_total, franja_leyenda, misma_pagina=True)
+    assert recortada == franja_total
+
+    # en páginas distintas tampoco hay nada que recortar, aunque las
+    # coordenadas coincidan
+    franja_total_otra_pagina = fitz.Rect(0, 190, 842, 239)
+    recortada_paginas_distintas = _recortar_total_antes_de_leyenda(
+        franja_total_otra_pagina, franja_leyenda, misma_pagina=False
+    )
+    assert recortada_paginas_distintas == franja_total_otra_pagina
+
+
+def test_recortar_total_antes_de_leyenda_nunca_corta_su_propia_etiqueta():
+    """Caso extremo: si la leyenda arranca ANTES incluso de donde empieza
+    el total (algo raro, pero si pasara), no hay que recortar el total
+    hasta dejarlo con alto cero o negativo -mejor dejarlo como está."""
+    franja_total = fitz.Rect(0, 190, 842, 239)
+    franja_leyenda_antes_del_total = fitz.Rect(0, 185, 842, 595)
+
+    recortada = _recortar_total_antes_de_leyenda(franja_total, franja_leyenda_antes_del_total, misma_pagina=True)
+    assert recortada == franja_total
+
+
+def test_pie_de_pagina_duplica_el_total_cuando_esta_pegado_a_codificacion(tmp_path):
+    """Prueba de punta a punta del caso real de MNK: "CODIFICACIÓN" pegada
+    casi sin espacio bajo el total. El total propio no debe tragarse la
+    barra de "CODIFICACIÓN" (se recorta antes de ella), y la leyenda debe
+    volver a incluir el total completo en su propio techo -aunque salga
+    duplicado, es preferible a perder contenido. Se compara contra lo que
+    las funciones reales calculan de forma independiente sobre la misma
+    página, así la prueba no depende de adivinar métricas de fuente a mano."""
+    ruta_poliza = tmp_path / "poliza_total_pegado.pdf"
+    documento = fitz.open()
+    pagina = documento.new_page(width=595, height=842)
+    pagina.insert_text((36, 40), "EMPRESA PRUEBA", fontsize=13)
+    _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
+    _escribir_fila(pagina, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
+    pagina.insert_text((36, 200), "TOTAL DE TRABAJADORES 1", fontsize=10)
+    pagina.insert_text((36, 220), "TOTAL DE SALARIO 405710.71", fontsize=10)
+    # pegada casi sin espacio -bastante antes de que termine el margen fijo
+    # de abajo del total (_MARGEN_ABAJO_TOTAL, 26pt desde su último renglón)
+    pagina.insert_text((36, 232), "CODIFICACIÓN", fontsize=10)
+    documento.save(str(ruta_poliza))
+    documento.close()
+
+    # referencia independiente: lo que las funciones reales calculan para
+    # esta misma página, antes de pasar por el pipeline completo
+    documento_ref = fitz.open(ruta_poliza)
+    pagina_ref = documento_ref[0]
+    franja_total_ref = _franja_total_en_pagina(pagina_ref, "mnk")
+    franja_leyenda_ref = _franja_leyenda_en_pagina(pagina_ref, "mnk")
+    alto_hoja = pagina_ref.rect.height
+    documento_ref.close()
+    assert franja_total_ref is not None and franja_leyenda_ref is not None
+    # confirma que este PDF de prueba de verdad reproduce el caso "pegado"
+    assert franja_leyenda_ref.y0 < franja_total_ref.y1
+
+    registros = [{"cedula": "111111111", "cliente": "Cliente Total Pegado", "nombre": "Juan Perez"}]
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [str(ruta_poliza)], registros, str(tmp_path / "salida"), formato="mnk"
+    )
+
+    documento_salida = fitz.open(resultado["archivos_por_cliente"]["Cliente Total Pegado"])
+    try:
+        imagenes = [xref for p in documento_salida for xref, *_r in p.get_images(full=True)]
+        assert len(imagenes) == 2
+
+        # las imágenes se guardan a 2x de escala (ver _pixmaps_pie_de_poliza)
+        alto_total, alto_leyenda = (
+            fitz.Pixmap(documento_salida.extract_image(xref)["image"]).height / 2 for xref in imagenes
+        )
+
+        # el total propio no debe llegar hasta "CODIFICACIÓN"
+        assert alto_total < (franja_leyenda_ref.y0 - franja_total_ref.y0) + 1
+
+        # la leyenda debe volver a incluir el total completo -su alto debe
+        # acercarse a la distancia desde el techo del total hasta el fondo
+        # de la hoja, no solo desde "CODIFICACIÓN"
+        alto_esperado_leyenda = alto_hoja - franja_total_ref.y0
+        assert alto_leyenda > alto_esperado_leyenda - 5
+    finally:
+        documento_salida.close()
 
 
 def test_techo_de_datos_no_confunde_numero_patronal_con_primera_fila():

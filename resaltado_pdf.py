@@ -400,18 +400,54 @@ def _franja_leyenda_en_pagina(pagina, formato: str = "auto", textpage=None) -> "
     return fitz.Rect(pagina.rect.x0, y0_leyenda - _MARGEN_ARRIBA_PIE, pagina.rect.x1, pagina.rect.height)
 
 
-def _recortar_leyenda_tras_total(
+def _extender_leyenda_para_incluir_total(
     franja_leyenda: "fitz.Rect", franja_total: "fitz.Rect | None", misma_pagina: bool,
 ) -> "fitz.Rect":
-    """Si el total y la leyenda cayeron en la misma página y el margen de
-    la leyenda se superpone con el total, la recorta para que empiece
-    justo donde termina el total -en MNK la barra de "CODIFICACIÓN" viene
-    pegada justo debajo de la del total, casi sin espacio, y sin este
-    ajuste la leyenda vuelve a arrastrar el total que ya se capturó por
-    separado."""
-    if misma_pagina and franja_total is not None and franja_leyenda.y0 < franja_total.y1:
-        return fitz.Rect(franja_leyenda.x0, franja_total.y1, franja_leyenda.x1, franja_leyenda.y1)
+    """Si el total y la leyenda cayeron en la misma página Y de verdad
+    vienen pegados (el techo natural de la leyenda cae dentro del cuerpo
+    del total -el mismo caso real de MNK, donde "CODIFICACIÓN" viene justo
+    debajo del total, casi sin espacio), se extiende el techo de la
+    leyenda para que arranque desde el propio inicio del total -así ese
+    bloque queda igual a como se ve en el original (el total,
+    "CODIFICACIÓN", la leyenda y la firma juntos, sin cortes), aunque el
+    total salga duplicado (ya se agregó también como su propio bloque
+    aparte, ver _recortar_total_antes_de_leyenda). Esa duplicación no
+    molesta -lo que sí sería un problema es perder contenido.
+
+    Si en cambio hay un hueco grande entre el total y la leyenda (como en
+    CCSS, donde pueden quedar a cientos de puntos de distancia), no se
+    extiende nada -si no, se arrastraría ese hueco entero como un solo
+    bloque enorme en vez de dos franjas separadas y pegadas a su propio
+    contenido."""
+    if (
+        misma_pagina
+        and franja_total is not None
+        and franja_total.y0 < franja_leyenda.y0 < franja_total.y1
+    ):
+        return fitz.Rect(franja_leyenda.x0, franja_total.y0, franja_leyenda.x1, franja_leyenda.y1)
     return franja_leyenda
+
+
+def _recortar_total_antes_de_leyenda(
+    franja_total: "fitz.Rect", franja_leyenda: "fitz.Rect | None", misma_pagina: bool,
+) -> "fitz.Rect":
+    """Complemento de _extender_leyenda_para_incluir_total: el margen
+    fijo de abajo del total (_MARGEN_ABAJO_TOTAL) está pensado para el
+    espacio normal entre el total y lo que sigue, pero cuando "CODIFICACIÓN"
+    viene pegada casi sin espacio bajo el total (el mismo caso real de MNK),
+    ese margen se pasa de largo y termina tragándose la barra de
+    "CODIFICACIÓN" completa dentro del recorte del total -dejándola faltante
+    en el de la leyenda, que arranca justo donde el total (ya inflado)
+    termina. Se recorta el total para que pare justo donde arranca la
+    leyenda, nunca antes de su propio inicio (para no romper su propia
+    etiqueta)."""
+    if (
+        misma_pagina
+        and franja_leyenda is not None
+        and franja_total.y1 > franja_leyenda.y0 > franja_total.y0
+    ):
+        return fitz.Rect(franja_total.x0, franja_total.y0, franja_total.x1, franja_leyenda.y0)
+    return franja_total
 
 
 def _franjas_pie_de_pagina(pagina, formato: str = "auto", textpage=None) -> list["fitz.Rect"]:
@@ -680,6 +716,27 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                         pagina_total, franja_total = candidata, franja
                         break
 
+                pagina_leyenda = franja_leyenda = None
+                for indice in range(ultimo_indice, ultimo_indice - num_a_revisar, -1):
+                    candidata = documento_pie[indice]
+                    franja = _franja_leyenda_en_pagina(candidata, formato)
+                    if franja is not None:
+                        pagina_leyenda, franja_leyenda = candidata, franja
+                        break
+
+                # ojo: NO comparar con "is" -- documento[indice] crea un
+                # objeto Page nuevo cada vez, así que dos llamadas para la
+                # MISMA página nunca son el mismo objeto. Hay que comparar
+                # el número de página real.
+                misma_pagina = (
+                    pagina_total is not None
+                    and pagina_leyenda is not None
+                    and pagina_leyenda.number == pagina_total.number
+                )
+
+                franja_total_original = franja_total
+                franja_total = _recortar_total_antes_de_leyenda(franja_total, franja_leyenda, misma_pagina)
+
                 if pagina_total is not None:
                     # si el PDF no trae ya generada la apariencia del campo,
                     # PyMuPDF lo captura en blanco -forzar que la regenere
@@ -694,22 +751,9 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                         (pixmap.tobytes("png"), pagina_total.rect.width, franja_total.height),
                     ))
 
-                pagina_leyenda = franja_leyenda = None
-                for indice in range(ultimo_indice, ultimo_indice - num_a_revisar, -1):
-                    candidata = documento_pie[indice]
-                    franja = _franja_leyenda_en_pagina(candidata, formato)
-                    if franja is not None:
-                        pagina_leyenda, franja_leyenda = candidata, franja
-                        break
-
                 if pagina_leyenda is not None:
-                    # ojo: NO comparar con "is" -- documento[indice] crea un
-                    # objeto Page nuevo cada vez, así que dos llamadas para
-                    # la MISMA página nunca son el mismo objeto. Hay que
-                    # comparar el número de página real.
-                    misma_pagina = pagina_total is not None and pagina_leyenda.number == pagina_total.number
-                    franja_leyenda = _recortar_leyenda_tras_total(
-                        franja_leyenda, franja_total, misma_pagina,
+                    franja_leyenda = _extender_leyenda_para_incluir_total(
+                        franja_leyenda, franja_total_original, misma_pagina,
                     )
                     pixmap = pagina_leyenda.get_pixmap(clip=franja_leyenda, matrix=fitz.Matrix(2, 2))
                     bloques_pie.append((

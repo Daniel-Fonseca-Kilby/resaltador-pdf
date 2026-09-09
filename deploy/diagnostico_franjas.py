@@ -13,9 +13,9 @@ sys.path.insert(0, "/opt/resaltador-pdf")
 
 import pymupdf as fitz
 from resaltado_pdf import (
+    _extender_leyenda_para_incluir_total,
     _franja_leyenda_en_pagina,
     _franja_total_en_pagina,
-    _recortar_leyenda_tras_total,
     _y0s_anclas_fila,
 )
 
@@ -71,9 +71,12 @@ def main():
         print("LEYENDA: no encontrada")
 
     if franja_leyenda is not None:
-        misma = pagina_leyenda is pagina_total
-        recortada = _recortar_leyenda_tras_total(franja_leyenda, franja_total, misma)
-        print(f"misma_pagina={misma}  LEYENDA recortada: y0={recortada.y0:.1f} y1={recortada.y1:.1f}")
+        # ojo: NO comparar con "is" -- documento[indice] crea un objeto
+        # Page nuevo cada vez, asi que dos llamadas para la MISMA pagina
+        # nunca son el mismo objeto. Hay que comparar el numero de pagina.
+        misma = pagina_total is not None and pagina_leyenda.number == pagina_total.number
+        extendida = _extender_leyenda_para_incluir_total(franja_leyenda, franja_total, misma)
+        print(f"misma_pagina={misma}  LEYENDA extendida: y0={extendida.y0:.1f} y1={extendida.y1:.1f}")
 
     if pagina_total is not None:
         y0s = _y0s_anclas_fila(pagina_total)
