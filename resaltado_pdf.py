@@ -237,14 +237,18 @@ def _techo_por_anclas(pagina, anclas: list[str], textpage=None) -> float | None:
 
 def _y0s_anclas_fila(pagina, textpage=None) -> list[float]:
     """Y de toda palabra con forma de cédula/identificación en esta
-    página (9+ dígitos seguidos) -sirve como ancla confiable de dónde
-    arranca cada fila de datos real, sin importar si esa persona está en
-    el Excel de este cliente o no (una póliza grande trae empleados de
-    otros clientes también)."""
+    página (9+ dígitos seguidos, en el tercio izquierdo de la hoja) -sirve
+    como ancla confiable de dónde arranca cada fila de datos real, sin
+    importar si esa persona está en el Excel de este cliente o no (una
+    póliza grande trae empleados de otros clientes también). Se limita a
+    la columna de identificación (izquierda) para no confundir una
+    cédula con una cifra de salario o de total, que también puede tener
+    9+ dígitos pero vive en una columna mucho más a la derecha."""
+    limite_x = pagina.rect.x0 + pagina.rect.width * 0.35
     palabras = pagina.get_text("words", textpage=textpage)
     return sorted({
         w[1] for w in palabras
-        if len("".join(c for c in w[4] if c.isdigit())) >= 9
+        if w[0] < limite_x and len("".join(c for c in w[4] if c.isdigit())) >= 9
     })
 
 
@@ -655,6 +659,60 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                     )
                     pixmap = pagina_leyenda.get_pixmap(clip=franja_leyenda, matrix=fitz.Matrix(2, 2))
                     resultado.append((pixmap.tobytes("png"), pagina_leyenda.rect.width, franja_leyenda.height))
+
+                # respaldo: en algunos PDFs reales el texto del total y de
+                # "CODIFICACIÓN" no se puede encontrar con search_for (por
+                # cómo esos rótulos quedaron generados), aunque se vean
+                # perfectamente al abrir el archivo. Si no se encontró
+                # nada por texto, se usa la posición de la ÚLTIMA fila de
+                # empleado real (ver _y0s_anclas_fila) como referencia:
+                # todo lo que hay debajo de ella, hasta el final de la
+                # hoja, es el cierre de la póliza (total, firma, aviso
+                # legal), sea o no texto buscable.
+                if not resultado and formato in ("mnk", "ccss"):
+                    pagina_cierre = indice_cierre = None
+                    for indice in range(ultimo_indice, ultimo_indice - num_a_revisar, -1):
+                        candidata = documento_pie[indice]
+                        y0s_filas = _y0s_anclas_fila(candidata)
+                        if y0s_filas:
+                            pagina_cierre, indice_cierre = candidata, indice
+                            y0_ultima_fila = y0s_filas[-1]
+                            break
+
+                    if pagina_cierre is not None:
+                        for widget in pagina_cierre.widgets() or []:
+                            try:
+                                widget.update()
+                            except Exception:
+                                pass
+                        franja_cierre = fitz.Rect(
+                            pagina_cierre.rect.x0, y0_ultima_fila + 14,
+                            pagina_cierre.rect.x1, pagina_cierre.rect.height,
+                        )
+                        # si de verdad no hay nada ahí (página de prueba
+                        # sin pie de página, por ejemplo), mejor no
+                        # agregar un recorte de puro espacio en blanco
+                        hay_contenido = bool(pagina_cierre.get_text(clip=franja_cierre).strip())
+                        if franja_cierre.height > 4 and hay_contenido:
+                            pixmap = pagina_cierre.get_pixmap(clip=franja_cierre, matrix=fitz.Matrix(2, 2))
+                            resultado.append((pixmap.tobytes("png"), pagina_cierre.rect.width, franja_cierre.height))
+
+                        # si la hoja siguiente no tiene ninguna fila de
+                        # empleado, es una continuación (aviso legal/pie
+                        # de contacto) -se copia completa
+                        siguiente_indice = indice_cierre + 1
+                        if siguiente_indice < documento_pie.page_count:
+                            pagina_siguiente = documento_pie[siguiente_indice]
+                            if not _y0s_anclas_fila(pagina_siguiente) and pagina_siguiente.get_text().strip():
+                                for widget in pagina_siguiente.widgets() or []:
+                                    try:
+                                        widget.update()
+                                    except Exception:
+                                        pass
+                                pixmap = pagina_siguiente.get_pixmap(matrix=fitz.Matrix(2, 2))
+                                resultado.append((
+                                    pixmap.tobytes("png"), pagina_siguiente.rect.width, pagina_siguiente.rect.height,
+                                ))
         except Exception:
             pass
         finally:
