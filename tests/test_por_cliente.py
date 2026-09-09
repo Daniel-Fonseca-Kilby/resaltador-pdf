@@ -4,6 +4,7 @@ from pathlib import Path
 import pymupdf as fitz
 
 from resaltado_pdf import (
+    _franja_total_en_pagina,
     _franjas_pie_de_pagina,
     _recortar_leyenda_tras_total,
     _techo_de_datos,
@@ -683,6 +684,28 @@ def test_encabezado_no_arrastra_la_primera_fila_de_datos_si_esta_muy_pegada(tmp_
         assert "PEREZ MORA" in texto_completo
     finally:
         documento_salida.close()
+
+
+def test_franja_del_total_no_incluye_la_ultima_fila_de_datos_pegada_arriba():
+    """Igual que con el encabezado repetido, el margen fijo del total
+    también puede pasarse de largo hacia la ÚLTIMA fila de datos real de
+    la página (no un encabezado repetido, sino un empleado cualquiera) si
+    quedan muy pegados, como en tablas de MNK con filas apretadas."""
+    documento = fitz.open()
+    pagina = documento.new_page(width=595, height=842)
+    pagina.insert_text((36, 40), "EMPRESA PRUEBA", fontsize=13)
+    _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
+    _escribir_fila(pagina, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
+    # el total queda muy pegado a la última fila de datos, sin un
+    # encabezado repetido de por medio
+    pagina.insert_text((36, 150), "TOTAL DE TRABAJADORES 1", fontsize=10)
+    pagina.insert_text((36, 170), "TOTAL DE SALARIO 405710.71", fontsize=10)
+
+    franja_total = _franja_total_en_pagina(pagina, formato="mnk")
+
+    assert franja_total is not None
+    rect_ultima_fila = pagina.search_for("PEREZ MORA")[0]
+    assert franja_total.y0 >= rect_ultima_fila.y1
 
 
 def test_polizas_distintas_conservan_su_propio_encabezado(tmp_path):

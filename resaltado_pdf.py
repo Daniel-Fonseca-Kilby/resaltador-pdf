@@ -362,6 +362,15 @@ def _franja_total_en_pagina(pagina, formato: str = "auto", textpage=None) -> "fi
         if margen_superior < limite_tras_encabezado < y0_total:
             margen_superior = limite_tras_encabezado
 
+    # en tablas con filas muy apretadas, el margen fijo también puede
+    # pasarse de largo hacia la ÚLTIMA fila de datos real (no un
+    # encabezado repetido, sino la última cédula de la página) -se usa
+    # como último recurso, solo si todavía queda más arriba que ella
+    y0s_filas = _y0s_anclas_fila(pagina, textpage=textpage)
+    anteriores = [y for y in y0s_filas if y < y0_total]
+    if anteriores and margen_superior < anteriores[-1]:
+        margen_superior = anteriores[-1] + 10
+
     return fitz.Rect(pagina.rect.x0, margen_superior, pagina.rect.x1, y1_total + _MARGEN_ABAJO_TOTAL)
 
 
