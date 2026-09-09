@@ -716,16 +716,40 @@ def test_franja_del_total_no_incluye_la_ultima_fila_de_datos_pegada_arriba():
     pagina.insert_text((36, 40), "EMPRESA PRUEBA", fontsize=13)
     _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
     _escribir_fila(pagina, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
-    # el total queda muy pegado a la última fila de datos, sin un
-    # encabezado repetido de por medio
-    pagina.insert_text((36, 150), "TOTAL DE TRABAJADORES 1", fontsize=10)
-    pagina.insert_text((36, 170), "TOTAL DE SALARIO 405710.71", fontsize=10)
+    # el total queda pegado a la última fila de datos (pero con margen
+    # suficiente para no tener que elegir entre cortar la etiqueta del
+    # total o arrastrar la fila -ver la otra prueba para el caso límite)
+    pagina.insert_text((36, 156), "TOTAL DE TRABAJADORES 1", fontsize=10)
+    pagina.insert_text((36, 176), "TOTAL DE SALARIO 405710.71", fontsize=10)
 
     franja_total = _franja_total_en_pagina(pagina, formato="mnk")
 
     assert franja_total is not None
     rect_ultima_fila = pagina.search_for("PEREZ MORA")[0]
     assert franja_total.y0 >= rect_ultima_fila.y1
+
+
+def test_franja_del_total_nunca_corta_su_propia_etiqueta(tmp_path):
+    """Si la última fila de datos queda TAN pegada al total que no hay
+    espacio para evitar el traslape sin cortar la etiqueta del total,
+    hay que priorizar no cortarla -mejor arrastrar un poco de la fila de
+    al lado que dejar el total con la etiqueta rota (lo que pasó de
+    verdad con un PDF real de CCSS)."""
+    documento = fitz.open()
+    pagina = documento.new_page(width=595, height=842)
+    pagina.insert_text((36, 40), "EMPRESA PRUEBA", fontsize=13)
+    _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
+    _escribir_fila(pagina, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
+    # caso extremo: el total queda pegadísimo a la última fila, sin
+    # espacio real para separarlos del todo
+    pagina.insert_text((36, 150), "TOTAL DE TRABAJADORES 1", fontsize=10)
+    pagina.insert_text((36, 170), "TOTAL DE SALARIO 405710.71", fontsize=10)
+
+    franja_total = _franja_total_en_pagina(pagina, formato="mnk")
+
+    assert franja_total is not None
+    rect_etiqueta_total = pagina.search_for("TOTAL DE TRABAJADORES")[0]
+    assert franja_total.y0 <= rect_etiqueta_total.y0
 
 
 def test_polizas_distintas_conservan_su_propio_encabezado(tmp_path):

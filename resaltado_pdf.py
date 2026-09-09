@@ -373,8 +373,14 @@ def _franja_total_en_pagina(pagina, formato: str = "auto", textpage=None) -> "fi
     # como último recurso, solo si todavía queda más arriba que ella
     y0s_filas = _y0s_anclas_fila(pagina, textpage=textpage)
     anteriores = [y for y in y0s_filas if y < y0_total]
-    if anteriores and margen_superior < anteriores[-1]:
-        margen_superior = anteriores[-1] + 10
+    if anteriores:
+        limite_tras_fila = anteriores[-1] + 10
+        # igual que con el encabezado repetido: solo se usa si de verdad
+        # cae ENTRE el margen naive y el total -si la última fila queda
+        # tan pegada que ni con esto alcanza, mejor aceptar el riesgo de
+        # arrastrar un poco de ella que cortar la etiqueta del total
+        if margen_superior < limite_tras_fila < y0_total:
+            margen_superior = limite_tras_fila
 
     return fitz.Rect(pagina.rect.x0, margen_superior, pagina.rect.x1, y1_total + _MARGEN_ABAJO_TOTAL)
 
