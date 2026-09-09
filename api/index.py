@@ -7,6 +7,7 @@ import csv
 import io
 import json
 import logging
+import os
 import shutil
 import sys
 import tempfile
@@ -32,6 +33,23 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 60 * 1024 * 1024  # 60 MB, de sobra para una planilla
+
+# TEMPORAL: apagado por defecto. Solo para diagnosticar el bug del pie de
+# página de MNK con un archivo real -activar con DEBUG_GUARDAR_SUBIDAS=1
+# en el entorno del servidor, y desactivar (borrando lo guardado) apenas
+# se termine de diagnosticar.
+_DEBUG_GUARDAR_SUBIDAS = os.environ.get("DEBUG_GUARDAR_SUBIDAS") == "1"
+_CARPETA_DEBUG_SUBIDAS = Path(tempfile.gettempdir()) / "debug_subidas"
+
+
+def _guardar_copia_debug(ruta_origen: Path, nombre_archivo: str) -> None:
+    if not _DEBUG_GUARDAR_SUBIDAS:
+        return
+    try:
+        _CARPETA_DEBUG_SUBIDAS.mkdir(parents=True, exist_ok=True)
+        shutil.copy(ruta_origen, _CARPETA_DEBUG_SUBIDAS / nombre_archivo)
+    except Exception as error:
+        app.logger.warning("No se pudo guardar copia de depuración de %s: %s", nombre_archivo, error)
 
 
 def _limpiar_temporales_antiguos(segundos_vida: int = 3600) -> int:
@@ -417,6 +435,7 @@ def _procesar_modo_cliente(registros: list[dict], archivos, formato: str, resalt
             ruta = carpeta_entrada / f"{i}_{nombre_archivo}"
             archivo.save(ruta)
             rutas_entrada.append(str(ruta))
+            _guardar_copia_debug(ruta, nombre_archivo)
 
         if not rutas_entrada:
             return jsonify(error="Ninguno de los archivos subidos es un PDF válido."), 400
