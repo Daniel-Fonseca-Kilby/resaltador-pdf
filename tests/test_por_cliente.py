@@ -4,6 +4,7 @@ from pathlib import Path
 import pymupdf as fitz
 
 from resaltado_pdf import (
+    _MARGEN_ABAJO_TOTAL,
     _extender_leyenda_para_incluir_total,
     _franja_leyenda_en_pagina,
     _franja_total_en_pagina,
@@ -681,6 +682,26 @@ def test_recortar_total_antes_de_leyenda_evita_tragarse_la_codificacion():
     assert recortada.y0 == franja_total_con_margen_generoso.y0  # nunca toca su propio inicio
 
 
+def test_recortar_total_antes_de_leyenda_nunca_corta_por_debajo_de_su_contenido_real(tmp_path):
+    """Caso real de MNK visto en producción: "CODIFICACIÓN" llegó TAN
+    pegada al total que recortar justo donde ella arranca dejaba al total
+    con menos alto del que necesita su propio renglón (sin el margen de
+    sobra) -cortando a media palabra el monto del "TOTAL DE SALARIO". Solo
+    el margen de sobra (_MARGEN_ABAJO_TOTAL) es sacrificable; el resto no,
+    aunque implique un poco de traslape con el inicio "crudo" de la
+    leyenda (que de todas formas la vuelve a incluir completa después)."""
+    # el renglón real del total (sin el margen) termina en y=222 -mucho
+    # después de donde arranca la leyenda (y=210)
+    franja_total = fitz.Rect(0, 190, 842, 190 + _MARGEN_ABAJO_TOTAL + 32)  # y1 = 248
+    franja_leyenda = fitz.Rect(0, 210, 842, 595)
+
+    recortada = _recortar_total_antes_de_leyenda(franja_total, franja_leyenda, misma_pagina=True)
+
+    y1_real_del_total = franja_total.y1 - _MARGEN_ABAJO_TOTAL  # 222
+    assert recortada.y1 == y1_real_del_total
+    assert recortada.y1 > franja_leyenda.y0  # se acepta el traslape antes que cortar contenido
+
+
 def test_recortar_total_antes_de_leyenda_no_toca_franja_que_no_se_superpone():
     """Si el margen del total ya paraba antes de donde arranca la leyenda,
     no hay nada que recortar."""
@@ -712,12 +733,14 @@ def test_recortar_total_antes_de_leyenda_nunca_corta_su_propia_etiqueta():
 
 def test_pie_de_pagina_duplica_el_total_cuando_esta_pegado_a_codificacion(tmp_path):
     """Prueba de punta a punta del caso real de MNK: "CODIFICACIÓN" pegada
-    casi sin espacio bajo el total. El total propio no debe tragarse la
-    barra de "CODIFICACIÓN" (se recorta antes de ella), y la leyenda debe
-    volver a incluir el total completo en su propio techo -aunque salga
-    duplicado, es preferible a perder contenido. Se compara contra lo que
-    las funciones reales calculan de forma independiente sobre la misma
-    página, así la prueba no depende de adivinar métricas de fuente a mano."""
+    casi sin espacio bajo el total. El total propio debe conservar, como
+    mínimo, el alto de su propio renglón real (sin el margen de sobra) -ni
+    un pelo menos, aunque eso implique traslaparse un poco con el inicio
+    "crudo" de la leyenda- y la leyenda debe volver a incluir el total
+    completo en su propio techo -aunque salga duplicado, es preferible a
+    perder contenido. Se compara contra lo que las funciones reales
+    calculan de forma independiente sobre la misma página, así la prueba
+    no depende de adivinar métricas de fuente a mano."""
     ruta_poliza = tmp_path / "poliza_total_pegado.pdf"
     documento = fitz.open()
     pagina = documento.new_page(width=595, height=842)
@@ -759,8 +782,11 @@ def test_pie_de_pagina_duplica_el_total_cuando_esta_pegado_a_codificacion(tmp_pa
             fitz.Pixmap(documento_salida.extract_image(xref)["image"]).height / 2 for xref in imagenes
         )
 
-        # el total propio no debe llegar hasta "CODIFICACIÓN"
-        assert alto_total < (franja_leyenda_ref.y0 - franja_total_ref.y0) + 1
+        # el total propio nunca debe quedar más corto que su propio
+        # renglón real (sin el margen de sobra) -aunque eso implique
+        # traslaparse un poco con el inicio "crudo" de la leyenda
+        alto_minimo_total = (franja_total_ref.y1 - _MARGEN_ABAJO_TOTAL) - franja_total_ref.y0
+        assert alto_total >= alto_minimo_total - 1
 
         # la leyenda debe volver a incluir el total completo -su alto debe
         # acercarse a la distancia desde el techo del total hasta el fondo

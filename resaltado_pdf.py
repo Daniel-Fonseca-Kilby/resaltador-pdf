@@ -439,14 +439,22 @@ def _recortar_total_antes_de_leyenda(
     "CODIFICACIÓN" completa dentro del recorte del total -dejándola faltante
     en el de la leyenda, que arranca justo donde el total (ya inflado)
     termina. Se recorta el total para que pare justo donde arranca la
-    leyenda, nunca antes de su propio inicio (para no romper su propia
-    etiqueta)."""
+    leyenda -pero nunca antes del renglón real del total (su propio y1
+    SIN el margen de sobra), aunque eso signifique dejar un poco de
+    traslape con la leyenda: solo el margen "de sobra" es sacrificable,
+    el contenido real del total no. En un caso real de MNK "CODIFICACIÓN"
+    llegó tan pegada que recortar hasta ahí dejaba el renglón del total
+    con menos alto del que necesita para verse completo -cortando el
+    monto."""
     if (
         misma_pagina
         and franja_leyenda is not None
         and franja_total.y1 > franja_leyenda.y0 > franja_total.y0
     ):
-        return fitz.Rect(franja_total.x0, franja_total.y0, franja_total.x1, franja_leyenda.y0)
+        y1_real_del_total = franja_total.y1 - _MARGEN_ABAJO_TOTAL
+        nuevo_y1 = max(franja_leyenda.y0, y1_real_del_total)
+        if nuevo_y1 < franja_total.y1:
+            return fitz.Rect(franja_total.x0, franja_total.y0, franja_total.x1, nuevo_y1)
     return franja_total
 
 
