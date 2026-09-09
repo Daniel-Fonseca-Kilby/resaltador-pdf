@@ -94,6 +94,8 @@ _TOLERANCIA_FILA = 3  # variación en Y (puntos) tolerada para considerar la mis
 # lado. Mejor perder alguna palabra de un puesto envuelto que mezclar
 # datos de otro empleado en el PDF de un cliente.)
 
+_ALTURA_MAXIMA_FILA_SIN_VECINA = 45  # puntos: tope cuando no hay otra fila abajo contra qué recortar
+
 
 def _limites_fila_por_anclas_vecinas(
     y0_objetivo: float, y0s_anclas_pagina: list[float],
@@ -780,6 +782,15 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                         fila_y0 = max(fila_y0, limite_superior)
                     if limite_inferior is not None:
                         fila_y1 = min(fila_y1, limite_inferior)
+                    else:
+                        # sin un empleado siguiente contra qué recortar
+                        # (ej. es el último de la página), un alto sin
+                        # límite es peligroso: si algo del pie de página
+                        # cae dentro de la tolerancia por pura
+                        # coincidencia, se arrastraría el total/firma
+                        # completos. Se limita a un alto generoso (varias
+                        # líneas envueltas) pero acotado.
+                        fila_y1 = min(fila_y1, fila_y0 + _ALTURA_MAXIMA_FILA_SIN_VECINA)
 
                     franja = fitz.Rect(pagina.rect.x0, fila_y0 - 2, pagina.rect.x1, fila_y1 + 2)
 
