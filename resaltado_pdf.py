@@ -727,9 +727,26 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                                 widget.update()
                             except Exception:
                                 pass
+                        y0_inicio_cierre = y0_ultima_fila + 14
+                        # se corta justo despues del ultimo texto real de la
+                        # pagina, no en el borde fisico de la hoja -si el
+                        # total/codificacion terminan a media pagina (con un
+                        # margen en blanco grande antes del pie de pagina
+                        # real, como pasa en algunas polizas grandes),
+                        # arrastrar ese espacio vacio se ve mal y deja un
+                        # salto de pagina feo en la salida. Cortando pegado
+                        # al contenido, si la firma/leyenda de la SIGUIENTE
+                        # hoja cabe justo debajo en la misma pagina de
+                        # salida, queda todo junto -igual que en el original.
+                        palabras_resto = [
+                            w for w in pagina_cierre.get_text("words") if w[1] > y0_inicio_cierre
+                        ]
+                        if palabras_resto:
+                            y1_cierre = min(max(w[3] for w in palabras_resto) + 10, pagina_cierre.rect.height)
+                        else:
+                            y1_cierre = pagina_cierre.rect.height
                         franja_cierre = fitz.Rect(
-                            pagina_cierre.rect.x0, y0_ultima_fila + 14,
-                            pagina_cierre.rect.x1, pagina_cierre.rect.height,
+                            pagina_cierre.rect.x0, y0_inicio_cierre, pagina_cierre.rect.x1, y1_cierre,
                         )
                         # si de verdad no hay nada ahí (página de prueba
                         # sin pie de página, por ejemplo), mejor no

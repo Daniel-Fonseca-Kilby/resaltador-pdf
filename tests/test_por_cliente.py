@@ -501,6 +501,51 @@ def test_pie_de_pagina_usa_la_ultima_fila_si_el_texto_del_total_no_se_encuentra(
         documento_salida.close()
 
 
+def test_respaldo_posicional_no_arrastra_el_espacio_en_blanco_hasta_el_fondo_de_la_hoja(tmp_path):
+    """Igual que la prueba anterior (texto de total no buscable), pero en
+    una hoja donde el contenido real termina bien antes del final de la
+    página -como pasa en pólizas grandes reales donde el total/codificación
+    quedan a media hoja y el resto queda en blanco. El respaldo posicional
+    no debe arrastrar ese espacio vacío hasta el borde físico de la hoja:
+    debe cortar justo después del último texto real, para que la
+    leyenda/firma de la hoja siguiente pueda quedar pegada en el mismo
+    bloque de salida en vez de dejar un salto de página feo en el medio."""
+    ruta_poliza = tmp_path / "poliza_con_hueco_grande.pdf"
+    documento = fitz.open()
+    pagina = documento.new_page(width=595, height=842)
+    pagina.insert_text((36, 40), "EMPRESA CON HUECO GRANDE", fontsize=13)
+    _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
+    _escribir_fila(pagina, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
+    # cierre que no calza con ninguna ancla conocida, y termina bien
+    # arriba -el resto de la hoja (hasta y=842) queda en blanco de verdad
+    pagina.insert_text((36, 200), "RESUMEN FINAL DE LA PLANILLA - 1 REGISTRO", fontsize=10)
+    documento.save(str(ruta_poliza))
+    documento.close()
+
+    registros = [{"cedula": "111111111", "cliente": "Cliente Hueco Grande", "nombre": "Juan Perez"}]
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [str(ruta_poliza)], registros, str(tmp_path / "salida"), formato="mnk"
+    )
+
+    documento_salida = fitz.open(resultado["archivos_por_cliente"]["Cliente Hueco Grande"])
+    try:
+        alto_maximo_imagen_pt = 0.0
+        for pagina_salida in documento_salida:
+            for xref, *_resto in pagina_salida.get_images(full=True):
+                pixmap_img = fitz.Pixmap(documento_salida.extract_image(xref)["image"])
+                # la imagen se renderiza a 2x (fitz.Matrix(2, 2)), así que
+                # se divide entre 2 para volver a puntos de PDF
+                alto_maximo_imagen_pt = max(alto_maximo_imagen_pt, pixmap_img.height / 2)
+
+        # el texto real termina cerca de y=210; si se arrastrara hasta el
+        # fondo de la hoja (842) la imagen tendría más de 600pt de alto.
+        # Cortando pegado al contenido debe quedar muy por debajo de eso.
+        assert alto_maximo_imagen_pt < 100
+    finally:
+        documento_salida.close()
+
+
 def test_franja_del_total_no_incluye_encabezado_repetido_pegado_arriba():
     """Cuando a la última hoja de una póliza le quedan pocas filas, CCSS
     repite el renglón de títulos de columna justo antes del total. La
