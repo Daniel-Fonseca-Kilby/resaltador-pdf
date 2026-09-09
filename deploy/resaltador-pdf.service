@@ -1,0 +1,13 @@
+[Unit]
+Description=Resaltador de Planillas en PDF
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/resaltador-pdf
+ExecStart=/opt/resaltador-pdf/venv/bin/gunicorn api.index:app --bind 0.0.0.0:8000 --workers 1 --threads 1 --timeout 600 --max-requests 50 --max-requests-jitter 10
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
