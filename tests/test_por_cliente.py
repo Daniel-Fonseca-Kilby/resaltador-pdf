@@ -128,6 +128,60 @@ def test_segunda_pasada_rescata_por_nombre_si_la_cedula_no_calza(tmp_path):
         documento.close()
 
 
+def test_extranjero_se_encuentra_por_numero_de_asegurado_si_el_dimex_no_aparece(tmp_path):
+    """La CCSS imprime a un extranjero bajo su número de asegurado de la
+    Caja, no bajo el DIMEX que trae el Excel. Si el registro trae
+    'numero_asegurado' y ese número sí aparece en el PDF (aunque el DIMEX
+    no aparezca en ningún lado), debe encontrarse en la misma pasada -sin
+    necesitar el rescate por nombre- y quedar reportado bajo su cédula
+    real (el DIMEX), no bajo el número de asegurado."""
+    ruta_poliza = tmp_path / "poliza_ccss.pdf"
+    _crear_pdf_planilla(
+        ruta_poliza,
+        "EMPRESA CCSS EXTRANJERO",
+        filas_por_pagina=[[("905550003", "MARIA", "GOMEZ TORRES", "Ninguna")]],
+    )
+    registros = [
+        {
+            "cedula": "155812345678",  # DIMEX -no aparece en el PDF
+            "cliente": "Cliente Extranjero",
+            "nombre": "Maria Gomez Torres",
+            "numero_asegurado": "905550003",  # el número que sí imprime la CCSS
+        },
+    ]
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [str(ruta_poliza)], registros, str(tmp_path / "salida"), formato="ccss"
+    )
+
+    assert resultado["no_encontrados"] == []
+    detalle = resultado["detalle_registros"][0]
+    assert detalle["encontrado"] is True
+    assert detalle["encontrado_por"] == "numero_asegurado"
+    # se reporta bajo la cédula real (DIMEX), no bajo el número de asegurado
+    assert detalle["cedula"] == "155812345678"
+
+    documento = fitz.open(resultado["archivos_por_cliente"]["Cliente Extranjero"])
+    try:
+        assert "GOMEZ" in documento[0].get_text()
+    finally:
+        documento.close()
+
+
+def test_numero_de_asegurado_vacio_no_afecta_la_busqueda_normal_por_cedula(ruta_pdf_ejemplo, registros_ejemplo, tmp_path):
+    """Si el registro no trae número de asegurado (columna vacía o
+    ausente, el caso normal para un nacional), todo debe seguir
+    funcionando exactamente igual que antes -por cédula."""
+    carpeta_salida = tmp_path / "salida_por_cliente"
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [ruta_pdf_ejemplo], registros_ejemplo, str(carpeta_salida), formato="mnk"
+    )
+
+    detalle_por_cedula = {d["cedula"]: d for d in resultado["detalle_registros"]}
+    assert detalle_por_cedula["111111111"]["encontrado_por"] == "cedula"
+
+
 def test_segunda_pasada_no_rescata_si_el_nombre_es_ambiguo(tmp_path):
     """Si el nombre completo aparece en más de una fila del lote, no se
     arriesga a adivinar cuál es la persona correcta -mejor dejarla como

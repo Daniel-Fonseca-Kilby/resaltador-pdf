@@ -463,11 +463,18 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     ejemplo) solo la primera trae el logo/título completos. Se repite una
     vez por póliza y de nuevo si esa póliza desborda a una segunda hoja.
 
-    A los registros que no calzan por cédula se les hace una segunda
-    pasada buscándolos por nombre completo (rescata casos como un DIMEX
-    en el Excel contra el número de CCSS que imprime la planilla). Solo
-    se acepta si el nombre aparece en exactamente una fila de todo el
-    lote y esa fila no es ya de otro empleado conocido.
+    Si un registro trae 'numero_asegurado' (columna opcional del Excel,
+    solo tiene valor para extranjeros), ese número también sirve como
+    identificador para encontrar la fila -en la planilla de la CCSS, un
+    extranjero con DIMEX sale impreso bajo su número de asegurado de la
+    Caja, no bajo el DIMEX que trae el Excel. Se busca en la misma pasada
+    que la cédula, sin lógica aparte, y se reporta igual bajo la cédula
+    real de la persona.
+
+    A los registros que aun así no calzan (sin número de asegurado, o
+    tampoco calzó) se les hace una segunda pasada buscándolos por nombre
+    completo. Solo se acepta si el nombre aparece en exactamente una fila
+    de todo el lote y esa fila no es ya de otro empleado conocido.
 
     Al cerrar cada póliza se le agrega su propio pie de página (el total
     y, si aparece, la leyenda con la firma) tal cual sale en el original
@@ -482,18 +489,45 @@ def resaltar_por_cedula_y_exportar_por_cliente(
             continue
         clave = (_normalizar_cedula(cedula), cliente)
         if clave not in registros_unicos:
-            registros_unicos[clave] = {"cedula": cedula, "cliente": cliente, "nombre": r.get("nombre", "")}
+            registros_unicos[clave] = {
+                "cedula": cedula,
+                "cliente": cliente,
+                "nombre": r.get("nombre", ""),
+                "numero_asegurado": r.get("numero_asegurado", ""),
+            }
 
+    # mapa_cedulas: identificador (cédula o número de asegurado) -> clientes.
+    # mapa_id_a_cedula_real: cualquier identificador conocido -> la cédula
+    # real del registro, para poder reportar/deduplicar siempre bajo la
+    # misma llave sin importar cuál de los dos números fue el que apareció
+    # en el PDF -en la planilla de la CCSS, un extranjero con DIMEX sale
+    # impreso bajo su número de asegurado de la Caja, no bajo el DIMEX que
+    # trae el Excel, así que ese número también tiene que servir para
+    # encontrarlo, en la misma pasada, sin lógica aparte.
     mapa_cedulas: dict[str, list[str]] = {}
+    mapa_id_a_cedula_real: dict[str, str] = {}
     for clave_cedula, cliente in registros_unicos:
         clientes = mapa_cedulas.setdefault(clave_cedula, [])
         if cliente not in clientes:
             clientes.append(cliente)
+        mapa_id_a_cedula_real.setdefault(clave_cedula, clave_cedula)
+
+        numero_asegurado_raw = registros_unicos[(clave_cedula, cliente)].get("numero_asegurado")
+        if numero_asegurado_raw:
+            numero_asegurado = _normalizar_cedula(numero_asegurado_raw)
+            clientes_asegurado = mapa_cedulas.setdefault(numero_asegurado, [])
+            if cliente not in clientes_asegurado:
+                clientes_asegurado.append(cliente)
+            mapa_id_a_cedula_real.setdefault(numero_asegurado, clave_cedula)
 
     estado_por_cliente: dict[str, dict] = {}
     polizas_encontradas: dict[tuple[str, str], set] = {}
     archivos_usados_por_cliente: dict[str, set] = {}  # para que la segunda pasada no reabra una póliza ya cerrada
     errores_por_archivo: dict[str, str] = {}
+    # quiénes se encontraron por su número de asegurado (no por su cédula/
+    # DIMEX) -conviene que Facturación lo sepa, igual que con "encontrado
+    # por nombre"
+    encontrados_por_numero_asegurado: set = set()
 
     carpeta = Path(carpeta_salida)
     carpeta.mkdir(parents=True, exist_ok=True)
@@ -776,9 +810,16 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                     clientes = _coincide_cliente(digitos, mapa_cedulas)
                     if not clientes:
                         continue
-                    clave_cedula = _normalizar_cedula(digitos)
-                    if clave_cedula not in mapa_cedulas and len(digitos) > 1:
-                        clave_cedula = _normalizar_cedula(digitos[1:])
+                    clave_cedula_hallada = _normalizar_cedula(digitos)
+                    if clave_cedula_hallada not in mapa_cedulas and len(digitos) > 1:
+                        clave_cedula_hallada = _normalizar_cedula(digitos[1:])
+                    # si lo que apareció en el PDF fue el número de
+                    # asegurado (no la cédula/DIMEX del Excel), se reporta
+                    # de todos modos bajo la cédula real de la persona -así
+                    # cuadra con la fila de registros_unicos y no aparece
+                    # como un empleado aparte
+                    clave_cedula = mapa_id_a_cedula_real.get(clave_cedula_hallada, clave_cedula_hallada)
+                    hallado_por_numero_asegurado = clave_cedula != clave_cedula_hallada
 
                     fila_y0 = min(w[1] for w in palabras if abs(w[1] - y0) <= _TOLERANCIA_FILA)
                     fila_y1 = max(w[3] for w in palabras if abs(w[1] - y0) <= _TOLERANCIA_FILA)
@@ -802,6 +843,8 @@ def resaltar_por_cedula_y_exportar_por_cliente(
 
                     for cliente in clientes:
                         polizas_encontradas.setdefault((clave_cedula, cliente), set()).add(nombre_archivo)
+                        if hallado_por_numero_asegurado:
+                            encontrados_por_numero_asegurado.add((clave_cedula, cliente))
 
                         vistas = franjas_vistas.setdefault(cliente, [])
                         if franja in vistas:
@@ -891,7 +934,11 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                                 if wclave_cedula not in mapa_cedulas and len(wdigitos) > 1:
                                     wclave_cedula = _normalizar_cedula(wdigitos[1:])
                                 if wclave_cedula in mapa_cedulas:
-                                    cedula_de_la_fila = wclave_cedula
+                                    # puede ser el número de asegurado de
+                                    # ESE otro empleado, no su cédula -se
+                                    # resuelve a su cédula real antes de
+                                    # comparar
+                                    cedula_de_la_fila = mapa_id_a_cedula_real.get(wclave_cedula, wclave_cedula)
                                     break
                             if cedula_de_la_fila is not None and cedula_de_la_fila != clave[0]:
                                 continue  # esa fila ya es de otro empleado conocido
@@ -995,11 +1042,19 @@ def resaltar_por_cedula_y_exportar_por_cliente(
             "cedula": datos["cedula"],
             "nombre": datos["nombre"],
             "cliente": cliente,
+            "numero_asegurado": datos.get("numero_asegurado", ""),
             "polizas": polizas,
             "encontrado": encontrado,
-            # "cedula": calzó por número; "nombre": rescatado en la segunda
-            # pasada (conviene revisarlo); None: no se encontró
-            "encontrado_por": ("nombre" if clave in encontrados_por_nombre else "cedula") if encontrado else None,
+            # "cedula": calzó por número; "numero_asegurado": la CCSS lo
+            # imprime bajo su número de asegurado en vez del DIMEX (normal
+            # en extranjeros, no hace falta revisarlo); "nombre": rescatado
+            # en la segunda pasada (ese sí conviene revisarlo); None: no se
+            # encontró
+            "encontrado_por": (
+                "nombre" if clave in encontrados_por_nombre
+                else "numero_asegurado" if clave in encontrados_por_numero_asegurado
+                else "cedula"
+            ) if encontrado else None,
             "motivo_no_rescatado": motivos_no_rescatado.get(clave),
         })
 
@@ -1086,9 +1141,11 @@ def generar_excel_resumen(detalle_registros: list[dict]) -> bytes:
     detalle_registros es la lista que devuelve
     resaltar_por_cedula_y_exportar_por_cliente bajo esa misma llave: un
     dict por cada (cédula, cliente) único, con cedula, nombre, cliente,
-    polizas (archivos donde se encontró), encontrado y encontrado_por
-    ("cedula", "nombre" o None -"nombre" significa que se rescató en la
-    segunda pasada y conviene revisarlo).
+    numero_asegurado (vacío salvo extranjeros), polizas (archivos donde se
+    encontró), encontrado y encontrado_por ("cedula", "numero_asegurado",
+    "nombre" o None -"nombre" significa que se rescató en la segunda
+    pasada y conviene revisarlo; "numero_asegurado" es el caso normal de
+    un extranjero, no hace falta revisarlo).
 
     Pestaña 1 (Resumen por Cliente): una fila por cliente con el total de
     oficiales listos para cobrar, cuántos faltan y en qué pólizas
@@ -1135,17 +1192,21 @@ def generar_excel_resumen(detalle_registros: list[dict]) -> bytes:
 
     hoja_detalle = libro.create_sheet("Detalle de Oficiales")
     _escribir_encabezado_excel(hoja_detalle, [
-        "Cédula", "Nombre Completo", "Cliente Asignado", "Póliza / Archivo de Origen", "¿Aparece en Planilla?",
+        "Cédula", "Número de Asegurado", "Nombre Completo", "Cliente Asignado",
+        "Póliza / Archivo de Origen", "¿Aparece en Planilla?",
     ])
     for d in sorted(detalle_registros, key=lambda d: (d["cliente"], d["cedula"])):
         if d.get("encontrado_por") == "nombre":
             estado_fila = "✅ Sí (por nombre -revisar)"
+        elif d.get("encontrado_por") == "numero_asegurado":
+            estado_fila = "✅ Sí (por número de asegurado)"
         elif d["encontrado"]:
             estado_fila = "✅ Sí"
         else:
             estado_fila = "❌ No encontrado"
         hoja_detalle.append([
             d["cedula"],
+            d.get("numero_asegurado") or "—",
             d["nombre"] or "—",
             d["cliente"],
             ", ".join(d["polizas"]) if d["polizas"] else "(Ninguno)",

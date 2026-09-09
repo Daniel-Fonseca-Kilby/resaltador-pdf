@@ -198,6 +198,13 @@ def _combinar_nombres(texto_nombres: str, archivo_excel) -> list[str]:
 _SINONIMOS_CEDULA = ["IDENTIFICACION", "CEDULA", "ID", "DOCUMENTO", "IDENTIFICACION FISCAL", "NUMERO"]
 _SINONIMOS_CLIENTE = ["CLIENTE", "CUENTA"]
 _SINONIMOS_NOMBRE = ["NOMBRE", "NOMBRES", "EMPLEADO", "COLABORADOR", "NOMBRE COMPLETO"]
+# columna opcional: en la CCSS, un extranjero con DIMEX sale impreso en la
+# planilla bajo su número de asegurado de la Caja, no bajo el DIMEX que
+# trae el Excel -si esta columna viene, solo debe tener valor para
+# extranjeros (vacía para nacionales, que se buscan por su cédula normal)
+_SINONIMOS_NUMERO_ASEGURADO = [
+    "NUMERO DE ASEGURADO", "NUMERO ASEGURADO", "ASEGURADO", "NUM ASEGURADO", "N ASEGURADO",
+]
 
 
 def _normalizar_encabezado(valor) -> str:
@@ -239,7 +246,11 @@ def _registros_desde_excel(archivo):
     asume lista de nombres y devuelve None para que el llamador use Modo
     Simple. Si tiene varias columnas pero ninguna calza, mejor un error
     claro que degradar en silencio -seguramente el usuario quería Modo
-    Cliente y algo no calzó."""
+    Cliente y algo no calzó.
+
+    La columna de número de asegurado es opcional -si no viene, no pasa
+    nada; si viene, solo debería tener valor para extranjeros (la CCSS los
+    imprime en la planilla bajo ese número, no bajo el DIMEX del Excel)."""
     filas = _filas_desde_archivo(archivo)
 
     encabezado = next(filas, None)
@@ -249,6 +260,9 @@ def _registros_desde_excel(archivo):
     indice_cedula = _indice_por_sinonimos(encabezado, _SINONIMOS_CEDULA)
     indice_cliente = _indice_por_sinonimos(encabezado, _SINONIMOS_CLIENTE)
     indice_nombre = _indice_por_sinonimos(encabezado, _SINONIMOS_NOMBRE)
+    # opcional -si no viene la columna, indice_numero_asegurado queda en
+    # None y ningún registro trae ese dato, sin romper nada
+    indice_numero_asegurado = _indice_por_sinonimos(encabezado, _SINONIMOS_NUMERO_ASEGURADO)
 
     if indice_cedula is None or indice_cliente is None:
         columnas_con_datos = sum(1 for valor in encabezado if valor not in (None, ""))
@@ -268,11 +282,19 @@ def _registros_desde_excel(archivo):
         nombre = ""
         if indice_nombre is not None and indice_nombre < len(fila) and fila[indice_nombre]:
             nombre = str(fila[indice_nombre]).strip()
+        numero_asegurado = ""
+        if (
+            indice_numero_asegurado is not None
+            and indice_numero_asegurado < len(fila)
+            and fila[indice_numero_asegurado]
+        ):
+            numero_asegurado = _extraer_cedula_limpia(fila[indice_numero_asegurado])
         registros.append(
             {
                 "cedula": cedula,
                 "cliente": cliente,
                 "nombre": nombre,
+                "numero_asegurado": numero_asegurado,
             }
         )
 
