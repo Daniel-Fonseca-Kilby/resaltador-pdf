@@ -235,6 +235,19 @@ def _techo_por_anclas(pagina, anclas: list[str], textpage=None) -> float | None:
     return y1_maximo + 14
 
 
+def _y0s_anclas_fila(pagina, textpage=None) -> list[float]:
+    """Y de toda palabra con forma de cédula/identificación en esta
+    página (9+ dígitos seguidos) -sirve como ancla confiable de dónde
+    arranca cada fila de datos real, sin importar si esa persona está en
+    el Excel de este cliente o no (una póliza grande trae empleados de
+    otros clientes también)."""
+    palabras = pagina.get_text("words", textpage=textpage)
+    return sorted({
+        w[1] for w in palabras
+        if len("".join(c for c in w[4] if c.isdigit())) >= 9
+    })
+
+
 def _techo_de_datos(pagina, formato: str = "auto", textpage=None) -> float | None:
     """Y donde arranca la tabla de empleados. Prueba primero las anclas
     del formato indicado y luego las de los demás formatos conocidos (por
@@ -252,6 +265,14 @@ def _techo_de_datos(pagina, formato: str = "auto", textpage=None) -> float | Non
     for anclas in perfiles_a_probar:
         techo = _techo_por_anclas(pagina, anclas, textpage=textpage)
         if techo is not None:
+            # en tablas con filas muy apretadas, el margen fijo de
+            # _techo_por_anclas (+14) puede pasarse de largo y arrastrar
+            # la primera fila de datos real -si la primera cédula de la
+            # página está más arriba que ese techo, se recorta justo
+            # antes de ella
+            y0s_filas = _y0s_anclas_fila(pagina, textpage=textpage)
+            if y0s_filas and techo > y0s_filas[0] - 2:
+                techo = y0s_filas[0] - 2
             return techo
 
     for estrategia in ("lines_strict", "lines", "text"):
@@ -651,20 +672,15 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 textpage = pagina.get_textpage()
                 palabras = pagina.get_text("words", textpage=textpage)
 
-                # Y de toda palabra con forma de cédula/identificación en
-                # esta página (9+ dígitos seguidos, sin importar si esa
-                # persona está en el Excel de este cliente o no -la póliza
-                # completa trae empleados de otros clientes también), para
-                # usar como techo/piso natural entre filas (ver
-                # _limites_fila_por_anclas_vecinas). No se filtra contra
-                # mapa_cedulas: si solo contáramos las cédulas que SÍ están
-                # en este Excel, las filas de empleados de otros clientes
-                # -que son la mayoría en una póliza grande- no cuentan como
-                # vecinas y no habría nada contra qué recortar.
-                y0s_cedulas_pagina = sorted({
-                    w[1] for w in palabras
-                    if len("".join(c for c in w[4] if c.isdigit())) >= 9
-                })
+                # Y de todas las filas de datos reales de esta página (ver
+                # _y0s_anclas_fila), para usar como techo/piso natural
+                # entre filas (ver _limites_fila_por_anclas_vecinas). No se
+                # filtra contra mapa_cedulas: si solo contáramos las
+                # cédulas que SÍ están en este Excel, las filas de
+                # empleados de otros clientes -que son la mayoría en una
+                # póliza grande- no cuentan como vecinas y no habría nada
+                # contra qué recortar.
+                y0s_cedulas_pagina = _y0s_anclas_fila(pagina, textpage=textpage)
 
                 franjas_vistas: dict[str, list] = {}
                 for x0, y0, x1, y1, palabra, *_resto in palabras:

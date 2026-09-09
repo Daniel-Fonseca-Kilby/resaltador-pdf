@@ -649,6 +649,42 @@ def test_recortar_leyenda_tras_total_no_toca_franja_que_no_se_superpone():
     assert recortada_paginas_distintas == franja_leyenda_superpuesta
 
 
+def test_encabezado_no_arrastra_la_primera_fila_de_datos_si_esta_muy_pegada(tmp_path):
+    """Si la primera fila de datos de la página queda muy pegada al
+    encabezado (menos que el margen fijo que usa _techo_de_datos), el
+    bloque de encabezado que se repite en el PDF de cada cliente no debe
+    arrastrar al primer empleado de esa página -aunque no sea la persona
+    buscada ni pertenezca a este cliente. Esto reproduce el caso real
+    donde el primer empleado de la póliza (ej. "Gamboa") aparecía pegado
+    justo después del encabezado en el PDF de CUALQUIER cliente de esa
+    póliza, sin importar a quién se buscara."""
+    ruta_poliza = tmp_path / "poliza_header_apretado.pdf"
+    documento = fitz.open()
+    pagina = documento.new_page(width=595, height=842)
+    pagina.insert_text((36, 40), "EMPRESA HEADER APRETADO", fontsize=13)
+    _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
+    # primer empleado de la página, pegado al encabezado -no es la
+    # persona buscada ni está en el Excel de este cliente
+    _escribir_fila(pagina, 112, [("999999999", 90), ("PRIMERO", 80), ("GAMBOA", 100), ("Ninguna", 90)])
+    _escribir_fila(pagina, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
+    documento.save(str(ruta_poliza))
+    documento.close()
+
+    registros = [{"cedula": "111111111", "cliente": "Cliente Header Apretado", "nombre": "Juan Perez"}]
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [str(ruta_poliza)], registros, str(tmp_path / "salida"), formato="mnk"
+    )
+
+    documento_salida = fitz.open(resultado["archivos_por_cliente"]["Cliente Header Apretado"])
+    try:
+        texto_completo = "".join(p.get_text() for p in documento_salida)
+        assert "GAMBOA" not in texto_completo
+        assert "PEREZ MORA" in texto_completo
+    finally:
+        documento_salida.close()
+
+
 def test_polizas_distintas_conservan_su_propio_encabezado(tmp_path):
     """Si el mismo cliente tiene oficiales en dos pólizas (archivos)
     distintas, cada una debe llegar en su propia hoja con su propio
