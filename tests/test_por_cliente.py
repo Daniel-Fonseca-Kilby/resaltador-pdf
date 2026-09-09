@@ -3,7 +3,12 @@ from pathlib import Path
 
 import pymupdf as fitz
 
-from resaltado_pdf import _franjas_pie_de_pagina, _techo_de_datos, resaltar_por_cedula_y_exportar_por_cliente
+from resaltado_pdf import (
+    _franjas_pie_de_pagina,
+    _recortar_leyenda_tras_total,
+    _techo_de_datos,
+    resaltar_por_cedula_y_exportar_por_cliente,
+)
 
 
 def _escribir_fila(pagina, y, celdas, fontsize=10):
@@ -609,6 +614,39 @@ def test_pie_de_pagina_cuando_el_total_se_repite_en_hoja_de_aviso_legal(tmp_path
         assert total_imagenes == 2
     finally:
         documento_salida.close()
+
+
+def test_recortar_leyenda_tras_total_evita_arrastrar_el_total_de_nuevo():
+    """En MNK la barra de "CODIFICACIÓN" viene pegada justo debajo de la
+    del total, casi sin espacio -si las dos caen en la misma página, el
+    margen fijo de la leyenda alcanza a comerse otra vez el total que ya
+    se capturó por separado. Debe recortarse para empezar justo donde
+    termina el total."""
+    franja_total = fitz.Rect(0, 200, 595, 248)
+    franja_leyenda_superpuesta = fitz.Rect(0, 215, 595, 800)
+
+    recortada = _recortar_leyenda_tras_total(franja_leyenda_superpuesta, franja_total, misma_pagina=True)
+
+    assert recortada.y0 == franja_total.y1
+    assert recortada.y1 == franja_leyenda_superpuesta.y1
+
+
+def test_recortar_leyenda_tras_total_no_toca_franja_que_no_se_superpone():
+    """Si el total y la leyenda están bien separados (o en páginas
+    distintas), no hay nada que recortar."""
+    franja_total = fitz.Rect(0, 200, 595, 248)
+    franja_leyenda_separada = fitz.Rect(0, 300, 595, 800)
+
+    recortada = _recortar_leyenda_tras_total(franja_leyenda_separada, franja_total, misma_pagina=True)
+    assert recortada == franja_leyenda_separada
+
+    # aunque se superpongan en coordenadas, si vienen de páginas distintas
+    # no tiene sentido recortar una contra la otra
+    franja_leyenda_superpuesta = fitz.Rect(0, 215, 595, 800)
+    recortada_paginas_distintas = _recortar_leyenda_tras_total(
+        franja_leyenda_superpuesta, franja_total, misma_pagina=False
+    )
+    assert recortada_paginas_distintas == franja_leyenda_superpuesta
 
 
 def test_polizas_distintas_conservan_su_propio_encabezado(tmp_path):

@@ -330,6 +330,20 @@ def _franja_leyenda_en_pagina(pagina, formato: str = "auto", textpage=None) -> "
     return fitz.Rect(pagina.rect.x0, y0_leyenda - _MARGEN_ARRIBA_PIE, pagina.rect.x1, pagina.rect.height)
 
 
+def _recortar_leyenda_tras_total(
+    franja_leyenda: "fitz.Rect", franja_total: "fitz.Rect | None", misma_pagina: bool,
+) -> "fitz.Rect":
+    """Si el total y la leyenda cayeron en la misma página y el margen de
+    la leyenda se superpone con el total, la recorta para que empiece
+    justo donde termina el total -en MNK la barra de "CODIFICACIÓN" viene
+    pegada justo debajo de la del total, casi sin espacio, y sin este
+    ajuste la leyenda vuelve a arrastrar el total que ya se capturó por
+    separado."""
+    if misma_pagina and franja_total is not None and franja_leyenda.y0 < franja_total.y1:
+        return fitz.Rect(franja_leyenda.x0, franja_total.y1, franja_leyenda.x1, franja_leyenda.y1)
+    return franja_leyenda
+
+
 def _franjas_pie_de_pagina(pagina, formato: str = "auto", textpage=None) -> list["fitz.Rect"]:
     """Franjas del pie de página de ESTA hoja: el total y, si aparece, la
     leyenda con la firma. Cada una se recorta pegada a su propio
@@ -572,6 +586,9 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                         break
 
                 if pagina_leyenda is not None:
+                    franja_leyenda = _recortar_leyenda_tras_total(
+                        franja_leyenda, franja_total, pagina_leyenda is pagina_total,
+                    )
                     pixmap = pagina_leyenda.get_pixmap(clip=franja_leyenda, matrix=fitz.Matrix(2, 2))
                     resultado.append((pixmap.tobytes("png"), pagina_leyenda.rect.width, franja_leyenda.height))
         except Exception:
