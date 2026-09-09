@@ -568,6 +568,49 @@ def test_franja_del_total_no_incluye_encabezado_repetido_pegado_arriba():
     assert franjas[0].y0 >= rect_encabezado_repetido.y1
 
 
+def test_pie_de_pagina_cuando_el_total_se_repite_en_hoja_de_aviso_legal(tmp_path):
+    """MNK reparte el pie de página real en dos hojas: la que trae los
+    datos + el total + "CODIFICACIÓN", y una hoja de aviso legal/firma
+    aparte donde el total se repite pero "CODIFICACIÓN" no aparece. El
+    total y la leyenda deben capturarse cada uno de la última hoja donde
+    de verdad aparecen -no asumir que están juntos, ni duplicar el total
+    solo porque sale en las dos hojas."""
+    ruta_poliza = tmp_path / "poliza_dos_hojas.pdf"
+    documento = fitz.open()
+
+    pagina_datos = documento.new_page(width=595, height=842)
+    pagina_datos.insert_text((36, 40), "EMPRESA DOS HOJAS", fontsize=13)
+    _escribir_fila(pagina_datos, 100, _TITULOS_COLUMNAS)
+    _escribir_fila(pagina_datos, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
+    pagina_datos.insert_text((36, 200), "TOTAL DE TRABAJADORES 1", fontsize=10)
+    pagina_datos.insert_text((36, 220), "TOTAL DE SALARIO 405710.71", fontsize=10)
+    pagina_datos.insert_text((36, 250), "CODIFICACIÓN", fontsize=10)
+
+    pagina_aviso = documento.new_page(width=595, height=842)
+    pagina_aviso.insert_text((36, 40), "TOTAL DE TRABAJADORES 1", fontsize=10)
+    pagina_aviso.insert_text((36, 60), "TOTAL DE SALARIO 405710.71", fontsize=10)
+    pagina_aviso.insert_text((36, 100), "La documentacion contractual y la nota tecnica...", fontsize=8)
+
+    documento.save(str(ruta_poliza))
+    documento.close()
+
+    registros = [{"cedula": "111111111", "cliente": "Cliente Dos Hojas", "nombre": "Juan Perez"}]
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [str(ruta_poliza)], registros, str(tmp_path / "salida"), formato="mnk"
+    )
+
+    documento_salida = fitz.open(resultado["archivos_por_cliente"]["Cliente Dos Hojas"])
+    try:
+        total_imagenes = sum(len(p.get_images(full=True)) for p in documento_salida)
+        # una imagen para el total (de la hoja de aviso, la última donde
+        # aparece) y una para la leyenda (de la hoja de datos, la única
+        # con "CODIFICACIÓN") -nunca deben salir tres o más
+        assert total_imagenes == 2
+    finally:
+        documento_salida.close()
+
+
 def test_polizas_distintas_conservan_su_propio_encabezado(tmp_path):
     """Si el mismo cliente tiene oficiales en dos pólizas (archivos)
     distintas, cada una debe llegar en su propia hoja con su propio

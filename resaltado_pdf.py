@@ -296,26 +296,20 @@ def _franja_por_perfiles(pagina, perfiles: dict, formato: str, textpage=None) ->
     return None
 
 
-def _franjas_pie_de_pagina(pagina, formato: str = "auto", textpage=None) -> list["fitz.Rect"]:
-    """Franjas del pie de página de la última hoja del archivo: el total
-    y, si aparece, la leyenda con la firma. Cada una se recorta pegada a
-    su propio contenido, sin el espacio en blanco que las separa en el
-    documento original. Si el formato no tiene perfil de total conocido
-    (ej. INS), no se agrega nada."""
-    franjas = []
-
+def _franja_total_en_pagina(pagina, formato: str = "auto", textpage=None) -> "fitz.Rect | None":
+    """Franja del renglón del total en esta página, o None si no aparece."""
     total = _franja_por_perfiles(pagina, _PERFILES_PIE_PAGINA, formato, textpage=textpage)
     if total is None:
-        return franjas
+        return None
     y0_total, y1_total = total
 
-    # cuando a la última hoja le quedan pocas filas, CCSS repite el
-    # renglón de títulos de columna justo antes del total -si ese renglón
-    # cae más cerca del total que el margen fijo, hay que recortar justo
-    # debajo de él para no arrastrarlo al pie de página. Se usa un margen
-    # chico (no el de _techo_de_datos, pensado para el espacio más amplio
-    # antes de la primera fila de datos) para no pasarse de largo y comerse
-    # el total.
+    # cuando a la hoja le quedan pocas filas, CCSS repite el renglón de
+    # títulos de columna justo antes del total -si ese renglón cae más
+    # cerca del total que el margen fijo, hay que recortar justo debajo
+    # de él para no arrastrarlo al pie de página. Se usa un margen chico
+    # (no el de _techo_de_datos, pensado para el espacio más amplio antes
+    # de la primera fila de datos) para no pasarse de largo y comerse el
+    # total.
     margen_superior = y0_total - _MARGEN_ARRIBA_PIE
     encabezado_repetido = _franja_por_perfiles(pagina, _PERFILES_ENCABEZADO, formato, textpage=textpage)
     if encabezado_repetido is not None:
@@ -324,16 +318,40 @@ def _franjas_pie_de_pagina(pagina, formato: str = "auto", textpage=None) -> list
         if margen_superior < limite_tras_encabezado < y0_total:
             margen_superior = limite_tras_encabezado
 
-    franjas.append(fitz.Rect(
-        pagina.rect.x0, margen_superior, pagina.rect.x1, y1_total + _MARGEN_ABAJO_TOTAL,
-    ))
+    return fitz.Rect(pagina.rect.x0, margen_superior, pagina.rect.x1, y1_total + _MARGEN_ABAJO_TOTAL)
 
+
+def _franja_leyenda_en_pagina(pagina, formato: str = "auto", textpage=None) -> "fitz.Rect | None":
+    """Franja de la leyenda/firma en esta página, o None si no aparece."""
     leyenda = _franja_por_perfiles(pagina, _PERFILES_LEYENDA_PIE, formato, textpage=textpage)
-    if leyenda is not None:
-        y0_leyenda, _y1_leyenda = leyenda
-        franjas.append(fitz.Rect(
-            pagina.rect.x0, y0_leyenda - _MARGEN_ARRIBA_PIE, pagina.rect.x1, pagina.rect.height,
-        ))
+    if leyenda is None:
+        return None
+    y0_leyenda, _y1_leyenda = leyenda
+    return fitz.Rect(pagina.rect.x0, y0_leyenda - _MARGEN_ARRIBA_PIE, pagina.rect.x1, pagina.rect.height)
+
+
+def _franjas_pie_de_pagina(pagina, formato: str = "auto", textpage=None) -> list["fitz.Rect"]:
+    """Franjas del pie de página de ESTA hoja: el total y, si aparece, la
+    leyenda con la firma. Cada una se recorta pegada a su propio
+    contenido, sin el espacio en blanco que las separa en el documento
+    original. Si el formato no tiene perfil de total conocido (ej. INS),
+    no se agrega nada.
+
+    Asume que el total y la leyenda están en la MISMA página -para
+    buscarlos cada uno en la última página del documento donde
+    realmente aparezcan (pueden caer en hojas distintas, ver
+    _pixmaps_pie_de_poliza), usar _franja_total_en_pagina y
+    _franja_leyenda_en_pagina por separado."""
+    franjas = []
+
+    franja_total = _franja_total_en_pagina(pagina, formato, textpage=textpage)
+    if franja_total is None:
+        return franjas
+    franjas.append(franja_total)
+
+    franja_leyenda = _franja_leyenda_en_pagina(pagina, formato, textpage=textpage)
+    if franja_leyenda is not None:
+        franjas.append(franja_leyenda)
 
     return franjas
 
@@ -504,7 +522,14 @@ def resaltar_por_cedula_y_exportar_por_cliente(
         clientes suelen compartirla) y lo guarda en caché como PNG. Se
         copia como imagen porque en CCSS el total lo rellena la Oficina
         Virtual como campo de formulario, y show_pdf_page no arrastra ese
-        valor."""
+        valor.
+
+        El total y la leyenda se buscan cada uno por separado, retrocediendo
+        desde la última página -MNK a veces repite el total al principio de
+        una página de aviso legal/datos de contacto que viene DESPUÉS de la
+        que trae "CODIFICACIÓN", así que no siempre caen en la misma hoja.
+        Si ninguna de las últimas páginas tiene el total, no se agrega nada
+        (mejor que arriesgarse a recortar cualquier cosa)."""
         if ruta_pdf_saliente in pixmaps_pie_por_archivo:
             return pixmaps_pie_por_archivo[ruta_pdf_saliente]
 
@@ -516,18 +541,39 @@ def resaltar_por_cedula_y_exportar_por_cliente(
             return resultado
         try:
             if not documento_pie.is_encrypted:
-                ultima_pagina = documento_pie[-1]
-                ancho_pagina = ultima_pagina.rect.width
-                # si el PDF no trae ya generada la apariencia del campo,
-                # PyMuPDF lo captura en blanco -hay que forzar que la regenere
-                for widget in ultima_pagina.widgets() or []:
-                    try:
-                        widget.update()
-                    except Exception:
-                        pass
-                for franja_pie in _franjas_pie_de_pagina(ultima_pagina, formato):
-                    pixmap = ultima_pagina.get_pixmap(clip=franja_pie, matrix=fitz.Matrix(2, 2))
-                    resultado.append((pixmap.tobytes("png"), ancho_pagina, franja_pie.height))
+                ultimo_indice = documento_pie.page_count - 1
+                num_a_revisar = min(3, documento_pie.page_count)
+
+                pagina_total = franja_total = None
+                for indice in range(ultimo_indice, ultimo_indice - num_a_revisar, -1):
+                    candidata = documento_pie[indice]
+                    franja = _franja_total_en_pagina(candidata, formato)
+                    if franja is not None:
+                        pagina_total, franja_total = candidata, franja
+                        break
+
+                if pagina_total is not None:
+                    # si el PDF no trae ya generada la apariencia del campo,
+                    # PyMuPDF lo captura en blanco -forzar que la regenere
+                    for widget in pagina_total.widgets() or []:
+                        try:
+                            widget.update()
+                        except Exception:
+                            pass
+                    pixmap = pagina_total.get_pixmap(clip=franja_total, matrix=fitz.Matrix(2, 2))
+                    resultado.append((pixmap.tobytes("png"), pagina_total.rect.width, franja_total.height))
+
+                pagina_leyenda = franja_leyenda = None
+                for indice in range(ultimo_indice, ultimo_indice - num_a_revisar, -1):
+                    candidata = documento_pie[indice]
+                    franja = _franja_leyenda_en_pagina(candidata, formato)
+                    if franja is not None:
+                        pagina_leyenda, franja_leyenda = candidata, franja
+                        break
+
+                if pagina_leyenda is not None:
+                    pixmap = pagina_leyenda.get_pixmap(clip=franja_leyenda, matrix=fitz.Matrix(2, 2))
+                    resultado.append((pixmap.tobytes("png"), pagina_leyenda.rect.width, franja_leyenda.height))
         except Exception:
             pass
         finally:
@@ -627,6 +673,10 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     # nombre completo. Solo se acepta si aparece en exactamente una fila
     # de todo el lote y esa fila no tiene ya la cédula de otro empleado
     encontrados_por_nombre: set = set()
+    # clave -> por qué la segunda pasada no lo rescató (nombre ambiguo, y
+    # dónde); si no aparece acá y tampoco se encontró, es que ni siquiera
+    # apareció el nombre en ninguna página
+    motivos_no_rescatado: dict[tuple[str, str], str] = {}
     pendientes_por_nombre: dict[tuple[str, str], list[str]] = {}
     for clave, datos in registros_unicos.items():
         if polizas_encontradas.get(clave):
@@ -684,6 +734,13 @@ def resaltar_por_cedula_y_exportar_por_cliente(
 
         for clave, candidatos in candidatos_por_pendiente.items():
             if len(candidatos) != 1:
+                # ambiguo: no se arriesga, pero se deja registrado el motivo
+                # exacto (y dónde) para que no quede como un simple "no
+                # encontrado" sin explicación
+                ubicaciones = ", ".join(
+                    f"{Path(ruta).name} pág. {pagina_num + 1}" for ruta, pagina_num, _coords in candidatos
+                )
+                motivos_no_rescatado[clave] = f"nombre ambiguo -{len(candidatos)} coincidencias: {ubicaciones}"
                 continue
             ruta_pdf_ganador, numero_pagina, coords = candidatos[0]
             cliente = clave[1]
@@ -694,6 +751,10 @@ def resaltar_por_cedula_y_exportar_por_cliente(
             archivo_actual_previo = estado_previo["archivo_actual"] if estado_previo else None
             usados_por_este_cliente = archivos_usados_por_cliente.get(cliente, set())
             if ruta_pdf_ganador in usados_por_este_cliente and ruta_pdf_ganador != archivo_actual_previo:
+                motivos_no_rescatado[clave] = (
+                    f"nombre encontrado en {Path(ruta_pdf_ganador).name} pág. {numero_pagina + 1}, "
+                    "pero esa póliza ya se había cerrado para este cliente -no se reabre para no duplicar"
+                )
                 continue
 
             franja = fitz.Rect(*coords)
@@ -739,6 +800,10 @@ def resaltar_por_cedula_y_exportar_por_cliente(
             finally:
                 documento_ganador.close()
 
+    for clave in pendientes_por_nombre:
+        if clave not in encontrados_por_nombre and clave not in motivos_no_rescatado:
+            motivos_no_rescatado[clave] = "nombre no aparece en ninguna página de los PDFs de este lote"
+
     for estado in estado_por_cliente.values():
         if estado["archivo_actual"] is not None:
             _agregar_pie_de_poliza(estado, estado["archivo_actual"])
@@ -762,10 +827,14 @@ def resaltar_por_cedula_y_exportar_por_cliente(
             # "cedula": calzó por número; "nombre": rescatado en la segunda
             # pasada (conviene revisarlo); None: no se encontró
             "encontrado_por": ("nombre" if clave in encontrados_por_nombre else "cedula") if encontrado else None,
+            "motivo_no_rescatado": motivos_no_rescatado.get(clave),
         })
 
     no_encontrados = [
-        {"cedula": d["cedula"], "cliente": d["cliente"], "nombre": d["nombre"]}
+        {
+            "cedula": d["cedula"], "cliente": d["cliente"], "nombre": d["nombre"],
+            "motivo_no_rescatado": d["motivo_no_rescatado"],
+        }
         for d in detalle_registros if not d["encontrado"]
     ]
 
