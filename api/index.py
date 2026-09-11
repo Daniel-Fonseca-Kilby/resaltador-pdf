@@ -14,6 +14,7 @@ import tempfile
 import time
 import unicodedata
 import zipfile
+from collections import defaultdict, deque
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -77,6 +78,48 @@ def _limpiar_temporales_antiguos(segundos_vida: int = 3600) -> int:
 
 
 _limpiar_temporales_antiguos()  # una pasada al arrancar el proceso
+
+
+# límite de solicitudes por IP a las rutas /api/* -sin esto, cualquiera
+# con el enlace (no hay login todavía) podría mandar muchas planillas
+# grandes seguidas y dejar el servidor lento para el resto, ya que
+# corre con un solo worker de Gunicorn (ver resaltador-pdf.service).
+# El conteo vive en memoria del propio proceso -funciona porque es un
+# solo worker; con más de uno habría que compartirlo (Redis, etc.).
+#
+# Usa request.remote_addr, así que asume que el servidor recibe el
+# tráfico directo (como ahora, sin Nginx delante -ver
+# nginx-resaltador-pdf.conf). Si en algún momento se vuelve a poner un
+# proxy adelante, hay que leer la IP real de X-Forwarded-For en su lugar,
+# o todas las solicitudes se verían como si vinieran del proxy (127.0.0.1)
+# y compartirían un solo cupo entre todos los usuarios.
+_LIMITE_SOLICITUDES_POR_IP = 10
+_VENTANA_LIMITE_SEGUNDOS = 5 * 60
+_historial_solicitudes_por_ip: dict[str, deque] = defaultdict(deque)
+
+
+def _ip_supero_el_limite(ip: str) -> bool:
+    ahora = time.time()
+    historial = _historial_solicitudes_por_ip[ip]
+    while historial and historial[0] < ahora - _VENTANA_LIMITE_SEGUNDOS:
+        historial.popleft()
+    if len(historial) >= _LIMITE_SOLICITUDES_POR_IP:
+        return True
+    historial.append(ahora)
+    return False
+
+
+@app.before_request
+def _limitar_solicitudes_api():
+    if not request.path.startswith("/api/"):
+        return None
+    ip = request.remote_addr or "desconocida"
+    if _ip_supero_el_limite(ip):
+        app.logger.warning("límite de solicitudes alcanzado para %s", ip)
+        return jsonify(
+            error="Demasiadas solicitudes seguidas desde esta conexión. Espere unos minutos e intente de nuevo."
+        ), 429
+    return None
 
 
 @app.route("/", methods=["GET"])
@@ -578,7 +621,5 @@ def procesar():
         return jsonify(error="Escriba al menos un nombre o suba un Excel con la lista de nombres."), 400
 
     return _procesar_modo_simple(nombres, archivos)
-
-
 if __name__ == "__main__":
     app.run(debug=True)
