@@ -5,7 +5,10 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/resaltador-pdf
-ExecStart=/opt/resaltador-pdf/venv/bin/gunicorn api.index:app --bind 0.0.0.0:8000 --workers 1 --threads 1 --timeout 600 --max-requests 50 --max-requests-jitter 10
+# escucha solo en localhost -Nginx queda al frente atendiendo el trafico
+# publico (80/443, con HTTPS via Let's Encrypt) y le reenvia a este puerto.
+# Asi gunicorn ya no queda expuesto directo a internet.
+ExecStart=/opt/resaltador-pdf/venv/bin/gunicorn api.index:app --bind 127.0.0.1:8000 --workers 1 --threads 1 --timeout 600 --max-requests 50 --max-requests-jitter 10
 Restart=always
 RestartSec=5
 
