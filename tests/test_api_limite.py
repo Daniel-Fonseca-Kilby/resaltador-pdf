@@ -1,7 +1,4 @@
-"""Pruebas del límite de solicitudes por IP en las rutas /api/* (ver
-_limitar_solicitudes_api en api/index.py). No usan PDFs reales -alcanza
-con pegarle a /api/detectar-modo-excel, que responde rápido, para contar
-cuántas solicitudes deja pasar antes de bloquear."""
+
 import api.index as api_index
 
 _cliente = api_index.app.test_client()

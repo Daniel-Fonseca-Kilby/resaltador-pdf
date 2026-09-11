@@ -87,12 +87,6 @@ def _puede_aparecer_en_pagina(texto_pagina_norm: str, texto: str, palabras: list
 
 
 _TOLERANCIA_FILA = 3  # variación en Y (puntos) tolerada para considerar la misma fila
-# (medido contra un PDF real de MNK: filas de empleados distintos pueden
-# quedar a solo 4-5pt una de otra cuando comparten el mismo puesto largo
-# envuelto a dos líneas -ej. "Guardias de protección"-, así que un margen
-# más ancho termina agarrando el nombre o salario de la persona de al
-# lado. Mejor perder alguna palabra de un puesto envuelto que mezclar
-# datos de otro empleado en el PDF de un cliente.)
 
 _ALTURA_MAXIMA_FILA_SIN_VECINA = 45  # puntos: tope cuando no hay otra fila abajo contra qué recortar
 
@@ -204,10 +198,7 @@ def _normalizar_cedula(digitos: str) -> str:
 
 
 def _coincide_cliente(digitos_palabra: str, mapa_cedulas: dict) -> list[str]:
-    """Clientes a los que pertenece esta cédula -un oficial puede estar
-    asignado a más de uno. Tolera el dígito de tipo de identificación que
-    antepone la CCSS y diferencias de ceros iniciales. mapa_cedulas debe
-    venir con las claves ya normalizadas."""
+    """Devuelve la lista de clientes que tienen esa cédula, o [] si no"""
     clientes = mapa_cedulas.get(_normalizar_cedula(digitos_palabra))
     if not clientes and len(digitos_palabra) > 1:
         clientes = mapa_cedulas.get(_normalizar_cedula(digitos_palabra[1:]))
@@ -238,14 +229,7 @@ def _techo_por_anclas(pagina, anclas: list[str], textpage=None) -> float | None:
 
 
 def _y0s_anclas_fila(pagina, textpage=None) -> list[float]:
-    """Y de toda palabra con forma de cédula/identificación en esta
-    página (9+ dígitos seguidos, en el tercio izquierdo de la hoja) -sirve
-    como ancla confiable de dónde arranca cada fila de datos real, sin
-    importar si esa persona está en el Excel de este cliente o no (una
-    póliza grande trae empleados de otros clientes también). Se limita a
-    la columna de identificación (izquierda) para no confundir una
-    cédula con una cifra de salario o de total, que también puede tener
-    9+ dígitos pero vive en una columna mucho más a la derecha."""
+    """Y0 de cada renglón donde aparece un número de cédula (9+ dígitos)"""
     limite_x = pagina.rect.x0 + pagina.rect.width * 0.35
     palabras = pagina.get_text("words", textpage=textpage)
     return sorted({
@@ -255,11 +239,7 @@ def _y0s_anclas_fila(pagina, textpage=None) -> list[float]:
 
 
 def _techo_de_datos(pagina, formato: str = "auto", textpage=None) -> float | None:
-    """Y donde arranca la tabla de empleados. Prueba primero las anclas
-    del formato indicado y luego las de los demás formatos conocidos (por
-    si el desplegable quedó mal puesto); si nada calza, cae al detector
-    de tablas de PyMuPDF. Si tampoco encuentra nada, mejor no devolver
-    encabezado que arriesgarse a mostrar la fila de otra persona."""
+    """Y justo debajo de la primera fila de datos, sin incluir el renglón"""
     perfiles_a_probar = []
     anclas_formato = _PERFILES_ENCABEZADO.get(formato)
     if anclas_formato:
@@ -271,14 +251,7 @@ def _techo_de_datos(pagina, formato: str = "auto", textpage=None) -> float | Non
     for anclas in perfiles_a_probar:
         techo = _techo_por_anclas(pagina, anclas, textpage=textpage)
         if techo is not None:
-            # en tablas con filas muy apretadas, el margen fijo de
-            # _techo_por_anclas (+14) puede pasarse de largo y arrastrar
-            # la primera fila de datos real -se recorta justo antes de
-            # ella. Pero solo cuenta un ancla que esté DESPUÉS del propio
-            # título de columnas (dentro de ese margen de 14pt), nunca
-            # antes -en CCSS, por ejemplo, el número patronal de la parte
-            # de arriba del documento también tiene 9+ dígitos, y no es
-            # una fila de empleado.
+           
             techo_crudo = techo - 14  # y1 real del título, sin el margen
             y0s_filas = _y0s_anclas_fila(pagina, textpage=textpage)
             candidatas = [y for y in y0s_filas if techo_crudo < y < techo]
@@ -358,13 +331,6 @@ def _franja_total_en_pagina(pagina, formato: str = "auto", textpage=None) -> "fi
         return None
     y0_total, y1_total = total
 
-    # cuando a la hoja le quedan pocas filas, CCSS repite el renglón de
-    # títulos de columna justo antes del total -si ese renglón cae más
-    # cerca del total que el margen fijo, hay que recortar justo debajo
-    # de él para no arrastrarlo al pie de página. Se usa un margen chico
-    # (no el de _techo_de_datos, pensado para el espacio más amplio antes
-    # de la primera fila de datos) para no pasarse de largo y comerse el
-    # total.
     margen_superior = y0_total - _MARGEN_ARRIBA_PIE
     encabezado_repetido = _franja_por_perfiles(pagina, _PERFILES_ENCABEZADO, formato, textpage=textpage)
     if encabezado_repetido is not None:
@@ -373,18 +339,12 @@ def _franja_total_en_pagina(pagina, formato: str = "auto", textpage=None) -> "fi
         if margen_superior < limite_tras_encabezado < y0_total:
             margen_superior = limite_tras_encabezado
 
-    # en tablas con filas muy apretadas, el margen fijo también puede
-    # pasarse de largo hacia la ÚLTIMA fila de datos real (no un
-    # encabezado repetido, sino la última cédula de la página) -se usa
-    # como último recurso, solo si todavía queda más arriba que ella
+    
     y0s_filas = _y0s_anclas_fila(pagina, textpage=textpage)
     anteriores = [y for y in y0s_filas if y < y0_total]
     if anteriores:
         limite_tras_fila = anteriores[-1] + 10
-        # igual que con el encabezado repetido: solo se usa si de verdad
-        # cae ENTRE el margen naive y el total -si la última fila queda
-        # tan pegada que ni con esto alcanza, mejor aceptar el riesgo de
-        # arrastrar un poco de ella que cortar la etiqueta del total
+        
         if margen_superior < limite_tras_fila < y0_total:
             margen_superior = limite_tras_fila
 
@@ -403,22 +363,7 @@ def _franja_leyenda_en_pagina(pagina, formato: str = "auto", textpage=None) -> "
 def _extender_leyenda_para_incluir_total(
     franja_leyenda: "fitz.Rect", franja_total: "fitz.Rect | None", misma_pagina: bool,
 ) -> "fitz.Rect":
-    """Si el total y la leyenda cayeron en la misma página Y de verdad
-    vienen pegados (el techo natural de la leyenda cae dentro del cuerpo
-    del total -el mismo caso real de MNK, donde "CODIFICACIÓN" viene justo
-    debajo del total, casi sin espacio), se extiende el techo de la
-    leyenda para que arranque desde el propio inicio del total -así ese
-    bloque queda igual a como se ve en el original (el total,
-    "CODIFICACIÓN", la leyenda y la firma juntos, sin cortes), aunque el
-    total salga duplicado (ya se agregó también como su propio bloque
-    aparte, ver _recortar_total_antes_de_leyenda). Esa duplicación no
-    molesta -lo que sí sería un problema es perder contenido.
-
-    Si en cambio hay un hueco grande entre el total y la leyenda (como en
-    CCSS, donde pueden quedar a cientos de puntos de distancia), no se
-    extiende nada -si no, se arrastraría ese hueco entero como un solo
-    bloque enorme en vez de dos franjas separadas y pegadas a su propio
-    contenido."""
+    """Cuando la leyenda cae pegada al total, se extiende para que el"""
     if (
         misma_pagina
         and franja_total is not None
@@ -431,21 +376,7 @@ def _extender_leyenda_para_incluir_total(
 def _recortar_total_antes_de_leyenda(
     franja_total: "fitz.Rect", franja_leyenda: "fitz.Rect | None", misma_pagina: bool,
 ) -> "fitz.Rect":
-    """Complemento de _extender_leyenda_para_incluir_total: el margen
-    fijo de abajo del total (_MARGEN_ABAJO_TOTAL) está pensado para el
-    espacio normal entre el total y lo que sigue, pero cuando "CODIFICACIÓN"
-    viene pegada casi sin espacio bajo el total (el mismo caso real de MNK),
-    ese margen se pasa de largo y termina tragándose la barra de
-    "CODIFICACIÓN" completa dentro del recorte del total -dejándola faltante
-    en el de la leyenda, que arranca justo donde el total (ya inflado)
-    termina. Se recorta el total para que pare justo donde arranca la
-    leyenda -pero nunca antes del renglón real del total (su propio y1
-    SIN el margen de sobra), aunque eso signifique dejar un poco de
-    traslape con la leyenda: solo el margen "de sobra" es sacrificable,
-    el contenido real del total no. En un caso real de MNK "CODIFICACIÓN"
-    llegó tan pegada que recortar hasta ahí dejaba el renglón del total
-    con menos alto del que necesita para verse completo -cortando el
-    monto."""
+    
     if (
         misma_pagina
         and franja_leyenda is not None
@@ -459,17 +390,7 @@ def _recortar_total_antes_de_leyenda(
 
 
 def _franjas_pie_de_pagina(pagina, formato: str = "auto", textpage=None) -> list["fitz.Rect"]:
-    """Franjas del pie de página de ESTA hoja: el total y, si aparece, la
-    leyenda con la firma. Cada una se recorta pegada a su propio
-    contenido, sin el espacio en blanco que las separa en el documento
-    original. Si el formato no tiene perfil de total conocido (ej. INS),
-    no se agrega nada.
-
-    Asume que el total y la leyenda están en la MISMA página -para
-    buscarlos cada uno en la última página del documento donde
-    realmente aparezcan (pueden caer en hojas distintas, ver
-    _pixmaps_pie_de_poliza), usar _franja_total_en_pagina y
-    _franja_leyenda_en_pagina por separado."""
+   
     franjas = []
 
     franja_total = _franja_total_en_pagina(pagina, formato, textpage=textpage)
@@ -495,38 +416,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     formato: str = "auto",
     resaltar_filas: bool = True,
 ) -> dict:
-    """Busca las cédulas de 'registros' en los PDFs, recorta cada fila
-    encontrada y arma un PDF por cliente.
-
-    Una misma cédula puede estar asignada a varios clientes (un oficial
-    que cubrió turnos en más de un puesto durante la quincena): su fila
-    se agrega al PDF de cada uno.
-
-    El encabezado se saca siempre de la página 1 del archivo, no de donde
-    arranca cada cliente -en reportes de varias páginas (MNK, por
-    ejemplo) solo la primera trae el logo/título completos. Se repite una
-    vez por póliza y de nuevo si esa póliza desborda a una segunda hoja.
-
-    Si un registro trae 'numero_asegurado' (columna opcional del Excel,
-    solo tiene valor para extranjeros), ese número también sirve como
-    identificador para encontrar la fila -en la planilla de la CCSS, un
-    extranjero con DIMEX sale impreso bajo su número de asegurado de la
-    Caja, no bajo el DIMEX que trae el Excel. Se busca en la misma pasada
-    que la cédula, sin lógica aparte, y se reporta igual bajo la cédula
-    real de la persona.
-
-    A los registros que aun así no calzan (sin número de asegurado, o
-    tampoco calzó) se reportan como no encontrados -no se busca por nombre
-    completo: con dos identificadores numéricos ya cubriendo los casos
-    reales conocidos, un rescate por nombre solo agrega falsos negativos
-    (más números conocidos = más choques por coincidencia entre filas).
-
-    Al cerrar cada póliza se le agrega su propio pie de página (el total
-    y, si aparece, la leyenda con la firma) tal cual sale en el original
-    -así lo pidió VMA. Se copia como imagen, no de forma vectorial, porque
-    en CCSS el total lo rellena la Oficina Virtual como campo de
-    formulario y show_pdf_page no arrastra ese valor.
-    """
+    
     registros_unicos: dict[tuple[str, str], dict] = {}
     for r in registros:
         cedula, cliente = r.get("cedula"), r.get("cliente")
@@ -541,14 +431,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 "numero_asegurado": r.get("numero_asegurado", ""),
             }
 
-    # mapa_cedulas: identificador (cédula o número de asegurado) -> clientes.
-    # mapa_id_a_cedula_real: cualquier identificador conocido -> la cédula
-    # real del registro, para poder reportar/deduplicar siempre bajo la
-    # misma llave sin importar cuál de los dos números fue el que apareció
-    # en el PDF -en la planilla de la CCSS, un extranjero con DIMEX sale
-    # impreso bajo su número de asegurado de la Caja, no bajo el DIMEX que
-    # trae el Excel, así que ese número también tiene que servir para
-    # encontrarlo, en la misma pasada, sin lógica aparte.
+    
     mapa_cedulas: dict[str, list[str]] = {}
     mapa_id_a_cedula_real: dict[str, str] = {}
     for clave_cedula, cliente in registros_unicos:
@@ -602,12 +485,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
             estado["pagina"] = None
 
     def _flush_a_disco(estado: dict) -> None:
-        """Guarda lo acumulado del cliente hasta ahora y cierra el
-        documento en memoria. Con lotes grandes, mantener el PDF completo
-        de cada cliente en RAM hasta el final del proceso es lo que
-        termina agotando la memoria del servidor -por eso esto se llama
-        en cada cambio de póliza, una vez que el bloque anterior ya quedó
-        cerrado y no se vuelve a tocar."""
+        
         documento = estado["documento"]
         if documento is None:
             return
@@ -636,11 +514,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
 
         _asegurar_documento(estado)
         if estado["pagina"] is None or estado["y"] + alto_bloque > estado["alto"] - _MARGEN_PAGINA:
-            # a diferencia del cambio de póliza, acá no se hace flush:
-            # guardar y reabrir a mitad de una misma póliza obliga a
-            # PyMuPDF a volver a copiar el logo/fuentes del encabezado en
-            # cada corte, duplicándolos. Mejor dejar que la póliza se
-            # termine de escribir de un tirón.
+            
             estado["pagina"] = estado["documento"].new_page(width=estado["ancho"], height=estado["alto"])
             estado["y"] = _MARGEN_PAGINA
             encabezado = estado["encabezado_actual"]
@@ -685,14 +559,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
         clientes suelen compartirla) y lo guarda en caché como PNG. Se
         copia como imagen porque en CCSS el total lo rellena la Oficina
         Virtual como campo de formulario, y show_pdf_page no arrastra ese
-        valor.
-
-        El total y la leyenda se buscan cada uno por separado, retrocediendo
-        desde la última página -MNK a veces repite el total al principio de
-        una página de aviso legal/datos de contacto que viene DESPUÉS de la
-        que trae "CODIFICACIÓN", así que no siempre caen en la misma hoja.
-        Si ninguna de las últimas páginas tiene el total, no se agrega nada
-        (mejor que arriesgarse a recortar cualquier cosa)."""
+        valor."""
         if ruta_pdf_saliente in pixmaps_pie_por_archivo:
             return pixmaps_pie_por_archivo[ruta_pdf_saliente]
 
@@ -707,13 +574,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 ultimo_indice = documento_pie.page_count - 1
                 num_a_revisar = min(6, documento_pie.page_count)
 
-                # el total y la leyenda se agregan en el orden en que de
-                # verdad aparecen en el documento original -no siempre es
-                # "total primero, leyenda después": cuando MNK repite el
-                # total al principio de una página de aviso legal/datos de
-                # contacto, esa página viene DESPUÉS de la que trae
-                # "CODIFICACIÓN" (con la firma), así que hay que ordenar por
-                # número de página real, no por un orden fijo.
+                
                 bloques_pie: list[tuple[int, float, tuple]] = []
 
                 pagina_total = franja_total = None
@@ -731,11 +592,6 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                     if franja is not None:
                         pagina_leyenda, franja_leyenda = candidata, franja
                         break
-
-                # ojo: NO comparar con "is" -- documento[indice] crea un
-                # objeto Page nuevo cada vez, así que dos llamadas para la
-                # MISMA página nunca son el mismo objeto. Hay que comparar
-                # el número de página real.
                 misma_pagina = (
                     pagina_total is not None
                     and pagina_leyenda is not None
@@ -772,15 +628,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 bloques_pie.sort(key=lambda b: (b[0], b[1]))
                 resultado.extend(bloque for _pagina, _y0, bloque in bloques_pie)
 
-                # respaldo: en algunos PDFs reales el texto del total y de
-                # "CODIFICACIÓN" no se puede encontrar con search_for (por
-                # cómo esos rótulos quedaron generados), aunque se vean
-                # perfectamente al abrir el archivo. Si no se encontró
-                # nada por texto, se usa la posición de la ÚLTIMA fila de
-                # empleado real (ver _y0s_anclas_fila) como referencia:
-                # todo lo que hay debajo de ella, hasta el final de la
-                # hoja, es el cierre de la póliza (total, firma, aviso
-                # legal), sea o no texto buscable.
+               
                 if not resultado and formato in ("mnk", "ccss"):
                     pagina_cierre = indice_cierre = None
                     for indice in range(ultimo_indice, ultimo_indice - num_a_revisar, -1):
@@ -798,16 +646,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                             except Exception:
                                 pass
                         y0_inicio_cierre = y0_ultima_fila + 14
-                        # se corta justo despues del ultimo texto real de la
-                        # pagina, no en el borde fisico de la hoja -si el
-                        # total/codificacion terminan a media pagina (con un
-                        # margen en blanco grande antes del pie de pagina
-                        # real, como pasa en algunas polizas grandes),
-                        # arrastrar ese espacio vacio se ve mal y deja un
-                        # salto de pagina feo en la salida. Cortando pegado
-                        # al contenido, si la firma/leyenda de la SIGUIENTE
-                        # hoja cabe justo debajo en la misma pagina de
-                        # salida, queda todo junto -igual que en el original.
+                      
                         palabras_resto = [
                             w for w in pagina_cierre.get_text("words") if w[1] > y0_inicio_cierre
                         ]
@@ -978,16 +817,6 @@ def resaltar_por_cedula_y_exportar_por_cliente(
         finally:
             documento.close()
 
-    # Nota: hubo una segunda pasada que buscaba por nombre completo a los
-    # que no calzaban por cédula/número de asegurado. Se quitó -con el
-    # número de asegurado ya cubriendo el caso real (extranjeros que la
-    # CCSS imprime bajo ese número), el rescate por nombre solo agregaba
-    # falsos negativos: entre más identificadores conocidos hay (cédulas +
-    # números de asegurado), más fácil es que la fila de un candidato por
-    # nombre "choque" por coincidencia con el número de asegurado de OTRO
-    # empleado y se descarte el rescate por error. Mejor una sola pasada
-    # confiable por número que una segunda pasada ambigua por nombre.
-
     for estado in estado_por_cliente.values():
         if estado["archivo_actual"] is not None:
             _agregar_pie_de_poliza(estado, estado["archivo_actual"])
@@ -1091,23 +920,7 @@ def _bordear_filas_excel(hoja) -> None:
 
 
 def generar_excel_resumen(detalle_registros: list[dict]) -> bytes:
-    """Arma el Excel de facturación (dos pestañas) que acompaña al zip del
-    modo cliente, para que Facturación no tenga que abrir los PDFs uno
-    por uno a contar oficiales a mano.
-
-    detalle_registros es la lista que devuelve
-    resaltar_por_cedula_y_exportar_por_cliente bajo esa misma llave: un
-    dict por cada (cédula, cliente) único, con cedula, nombre, cliente,
-    numero_asegurado (vacío salvo extranjeros), polizas (archivos donde se
-    encontró), encontrado y encontrado_por ("cedula", "numero_asegurado" o
-    None -"numero_asegurado" es el caso normal de un extranjero, no hace
-    falta revisarlo).
-
-    Pestaña 1 (Resumen por Cliente): una fila por cliente con el total de
-    oficiales listos para cobrar, cuántos faltan y en qué pólizas
-    aparecieron. Pestaña 2 (Detalle de Oficiales): una fila por oficial,
-    para conciliar reclamos puntuales.
-    """
+    
     libro = openpyxl.Workbook()
 
     hoja_resumen = libro.active

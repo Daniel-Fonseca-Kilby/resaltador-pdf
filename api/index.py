@@ -383,17 +383,7 @@ def _nombre_zip_sin_colision(nombre: str, nombres_usados: set) -> str:
 
 
 def _procesar_modo_simple(nombres: list[str], archivos):
-    """Genera el zip de PDFs resaltados y lo manda por streaming
-    (send_file) en vez de base64 -con planillas pesadas eso duplicaba el
-    archivo en memoria. El detalle por archivo/nombre va dentro del zip,
-    en Resumen_Modo_Simple.pdf; la respuesta solo trae los totales, en
-    cabeceras.
-
-    El zip se arma en un archivo temporal en disco, no en un
-    io.BytesIO() -con lotes grandes ese buffer se sumaba a la memoria que
-    ya estaban usando los PDFs generados. Se borra apenas termina de
-    enviarse la respuesta.
-    """
+   
     coincidencias_por_archivo: dict[str, dict] = {}
     errores_por_archivo: dict[str, str] = {}
     nombres_zip_usados: set[str] = set()
