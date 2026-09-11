@@ -5,10 +5,12 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/resaltador-pdf
-# escucha solo en localhost -Nginx queda al frente atendiendo el trafico
-# publico (80/443, con HTTPS via Let's Encrypt) y le reenvia a este puerto.
-# Asi gunicorn ya no queda expuesto directo a internet.
-ExecStart=/opt/resaltador-pdf/venv/bin/gunicorn api.index:app --bind 127.0.0.1:8000 --workers 1 --threads 1 --timeout 600 --max-requests 50 --max-requests-jitter 10
+# vuelve a escuchar en todas las interfaces (HTTP simple, sin Nginx
+# delante) -el plan de HTTPS con Nginx+certbot quedo en pausa porque el
+# firewall corporativo de VMA (Fortinet) bloquea sslip.io por categoria
+# "Dynamic DNS". Retomar con "--bind 127.0.0.1:8000" (ver historial de
+# este archivo) apenas VMA tenga un dominio propio.
+ExecStart=/opt/resaltador-pdf/venv/bin/gunicorn api.index:app --bind 0.0.0.0:8000 --workers 1 --threads 1 --timeout 600 --max-requests 50 --max-requests-jitter 10
 Restart=always
 RestartSec=5
 
