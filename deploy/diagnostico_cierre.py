@@ -1,12 +1,4 @@
-"""Diagnostico: para las ultimas paginas de un PDF real, muestra donde caen
-las filas de empleado (ancla posicional) y que tan alto es el hueco entre la
-ultima fila y el final de esa pagina, para poder ver exactamente que esta
-agarrando el respaldo posicional de _pixmaps_pie_de_poliza. No depende de
-search_for -por eso sirve incluso cuando el texto del total/codificacion no
-es buscable en el PDF real.
 
-Uso: venv/bin/python deploy/diagnostico_cierre.py /tmp/debug_subidas/Electro_MNK_082026.pdf
-"""
 import sys
 
 sys.path.insert(0, "/opt/resaltador-pdf")

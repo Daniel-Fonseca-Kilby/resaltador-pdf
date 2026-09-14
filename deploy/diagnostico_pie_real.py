@@ -1,12 +1,4 @@
-"""Reproduce EXACTAMENTE la logica de _pixmaps_pie_de_poliza (la funcion
-real que usa la app en produccion, no una copia aparte) contra un PDF real,
-e imprime cada paso -que pagina se eligio para el total, cual para la
-leyenda, como se recortan y extienden entre si, y el tamano final de cada
-recorte. Ademas guarda cada recorte como PNG en /tmp para verlo tal cual
-saldria en el PDF del cliente.
 
-Uso: venv/bin/python deploy/diagnostico_pie_real.py /tmp/debug_subidas/archivo.pdf [formato]
-"""
 import sys
 
 sys.path.insert(0, "/opt/resaltador-pdf")

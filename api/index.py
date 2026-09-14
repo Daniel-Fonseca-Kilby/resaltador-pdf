@@ -36,10 +36,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 60 * 1024 * 1024  # 60 MB, de sobra para una planilla
 
-# TEMPORAL: apagado por defecto. Solo para diagnosticar el bug del pie de
-# página de MNK con un archivo real -activar con DEBUG_GUARDAR_SUBIDAS=1
-# en el entorno del servidor, y desactivar (borrando lo guardado) apenas
-# se termine de diagnosticar.
+
 _DEBUG_GUARDAR_SUBIDAS = os.environ.get("DEBUG_GUARDAR_SUBIDAS") == "1"
 _CARPETA_DEBUG_SUBIDAS = Path(tempfile.gettempdir()) / "debug_subidas"
 
@@ -76,20 +73,6 @@ def _limpiar_temporales_antiguos(segundos_vida: int = 3600) -> int:
 
 _limpiar_temporales_antiguos()  # una pasada al arrancar el proceso
 
-
-# límite de solicitudes por IP a las rutas /api/* -sin esto, cualquiera
-# con el enlace (no hay login todavía) podría mandar muchas planillas
-# grandes seguidas y dejar el servidor lento para el resto, ya que
-# corre con un solo worker de Gunicorn (ver resaltador-pdf.service).
-# El conteo vive en memoria del propio proceso -funciona porque es un
-# solo worker; con más de uno habría que compartirlo (Redis, etc.).
-#
-# Usa request.remote_addr, así que asume que el servidor recibe el
-# tráfico directo (como ahora, sin Nginx delante -ver
-# nginx-resaltador-pdf.conf). Si en algún momento se vuelve a poner un
-# proxy adelante, hay que leer la IP real de X-Forwarded-For en su lugar,
-# o todas las solicitudes se verían como si vinieran del proxy (127.0.0.1)
-# y compartirían un solo cupo entre todos los usuarios.
 _LIMITE_SOLICITUDES_POR_IP = 10
 _VENTANA_LIMITE_SEGUNDOS = 5 * 60
 _historial_solicitudes_por_ip: dict[str, deque] = defaultdict(deque)
@@ -231,10 +214,7 @@ def _combinar_nombres(texto_nombres: str, archivo_excel) -> list[str]:
 _SINONIMOS_CEDULA = ["IDENTIFICACION", "CEDULA", "ID", "DOCUMENTO", "IDENTIFICACION FISCAL", "NUMERO"]
 _SINONIMOS_CLIENTE = ["CLIENTE", "CUENTA"]
 _SINONIMOS_NOMBRE = ["NOMBRE", "NOMBRES", "EMPLEADO", "COLABORADOR", "NOMBRE COMPLETO"]
-# columna opcional: en la CCSS, un extranjero con DIMEX sale impreso en la
-# planilla bajo su número de asegurado de la Caja, no bajo el DIMEX que
-# trae el Excel -si esta columna viene, solo debe tener valor para
-# extranjeros (vacía para nacionales, que se buscan por su cédula normal)
+# columna opcional: en la CCSS, un extranjero con DIMEX sale impreso con su número de asegurado, y en el Excel de la planilla también viene esa columna
 _SINONIMOS_NUMERO_ASEGURADO = [
     "NUMERO DE ASEGURADO", "NUMERO ASEGURADO", "ASEGURADO", "NUM ASEGURADO", "N ASEGURADO",
 ]
@@ -284,8 +264,6 @@ def _registros_desde_excel(archivo):
     indice_cedula = _indice_por_sinonimos(encabezado, _SINONIMOS_CEDULA)
     indice_cliente = _indice_por_sinonimos(encabezado, _SINONIMOS_CLIENTE)
     indice_nombre = _indice_por_sinonimos(encabezado, _SINONIMOS_NOMBRE)
-    # opcional -si no viene la columna, indice_numero_asegurado queda en
-    # None y ningún registro trae ese dato, sin romper nada
     indice_numero_asegurado = _indice_por_sinonimos(encabezado, _SINONIMOS_NUMERO_ASEGURADO)
 
     if indice_cedula is None or indice_cliente is None:
@@ -380,9 +358,6 @@ def _procesar_modo_simple(nombres: list[str], archivos):
                 if not nombre_archivo.lower().endswith(".pdf"):
                     errores_por_archivo[nombre_archivo] = "No es un archivo PDF."
                     continue
-
-                # prefijo por índice: es común subir dos PDFs con el mismo
-                # nombre (de portales distintos) y sin esto se pisarían
                 ruta_entrada = carpeta_temporal / f"{i}_{nombre_archivo}"
                 archivo.save(ruta_entrada)
 
@@ -446,9 +421,6 @@ def _procesar_modo_simple(nombres: list[str], archivos):
 
 _FORMATOS_VALIDOS = {"auto", "ccss", "mnk", "ins"}
 
-# margen bajo el límite típico de ~8 KB por cabecera HTTP -con un lote
-# grande de no encontrados, mejor omitir la cabecera que arriesgarse a
-# que el proxy rechace toda la respuesta
 _LIMITE_BYTES_NO_ENCONTRADOS_HEADER = 4000
 
 
@@ -468,8 +440,7 @@ def _procesar_modo_cliente(
             if not nombre_archivo.lower().endswith(".pdf"):
                 pdfs_invalidos.append(nombre_archivo)
                 continue
-            # prefijo por índice: es común descargar "Planilla.pdf" de
-            # varios portales (CCSS, INS...) con el mismo nombre
+
             ruta = carpeta_entrada / f"{i}_{nombre_archivo}"
             archivo.save(ruta)
             rutas_entrada.append(str(ruta))
@@ -480,10 +451,6 @@ def _procesar_modo_cliente(
 
         try:
             if solo_resaltar:
-                # sin recorte ni fusión: cada PDF de entrada queda intacto,
-                # solo con las filas encontradas resaltadas -no aplica el
-                # ajuste fino de encabezado/pie de página por formato,
-                # porque no se corta nada
                 resultado = resaltar_por_cedula_sin_recortar(rutas_entrada, registros, str(carpeta_salida))
                 archivos_generados = resultado["archivos_resaltados"]
             else:
@@ -552,9 +519,6 @@ def _procesar_modo_cliente(
     respuesta.headers["X-Total-Errores"] = str(len(errores_archivos))
     respuesta.headers["X-Total-No-Encontrados"] = str(len(no_encontrados))
 
-    # para que el navegador liste las cédulas sin abrir el zip -si el lote
-    # es grande y no cabe en una cabecera, mejor omitirla (igual queda en
-    # Resumen.pdf, dentro del zip)
     if no_encontrados:
         no_encontrados_b64 = base64.b64encode(json.dumps(no_encontrados).encode("utf-8")).decode("ascii")
         if len(no_encontrados_b64) <= _LIMITE_BYTES_NO_ENCONTRADOS_HEADER:

@@ -1,6 +1,4 @@
-"""Diagnostico usando las funciones reales del proyecto contra un PDF real.
-Uso: venv/bin/python deploy/diagnostico_real.py /tmp/diagnostico.pdf
-"""
+
 import sys
 sys.path.insert(0, "/opt/resaltador-pdf")
 

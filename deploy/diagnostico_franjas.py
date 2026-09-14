@@ -1,12 +1,4 @@
-"""Diagnostico: corre las funciones REALES de recorte del pie de pagina
-(las mismas que usa _pixmaps_pie_de_poliza) contra la ultima pagina de un
-PDF real, e imprime los rectangulos exactos que calculan, mas el texto de
-esa zona agrupado por renglon (una linea de salida por renglon del PDF,
-no una por palabra) para que quepa en una sola pantalla sin necesitar
-scroll.
 
-Uso: venv/bin/python deploy/diagnostico_franjas.py /tmp/debug_subidas/Servicios_MNK_082026.pdf
-"""
 import sys
 
 sys.path.insert(0, "/opt/resaltador-pdf")

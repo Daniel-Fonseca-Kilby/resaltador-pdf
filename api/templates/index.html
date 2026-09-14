@@ -982,11 +982,6 @@ configurarDropzone(dropzoneExcel, (archivos) => {
 
 configurarDropzone(dropzonePdfs, (archivos) => agregarPdfs(archivos));
 
-// --- Envío y resultado -------------------------------------------------------
-// Ninguno de los dos modos manda ya el detalle en JSON -el zip viaja
-// directo por streaming (sin base64) y el detalle por archivo/nombre, o
-// de errores/no encontrados, va como PDF adentro del zip. Acá solo se
-// arma un resumen corto con los conteos que vienen en las cabeceras.
 function mostrarResultadoSimpleResumen(totalArchivos, totalErrores, totalCoincidencias) {
   limpiarResultado();
   const hayProblemas = totalErrores > 0;
@@ -1258,8 +1253,6 @@ btn.addEventListener("click", async () => {
     enlaceDescarga.href = URL.createObjectURL(blob);
     enlaceDescarga.style.display = "flex";
 
-    // vista previa por archivo (RQ-13): se arma leyendo el mismo blob con
-    // JSZip, sin pedirle nada más al servidor
     const listaPdfs = await construirListaPdfsDelZip(blob);
     if (listaPdfs) {
       resultado.appendChild(tituloSeccion("Archivos generados"));

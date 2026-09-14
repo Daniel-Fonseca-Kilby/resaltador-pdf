@@ -1,8 +1,4 @@
-"""Diagnostico: imprime, para las ultimas paginas de un PDF, donde
-aparecen exactamente los anclajes del pie de pagina (total y leyenda) y
-las cedulas encontradas cerca de una fila de interes. Uso:
-    venv/bin/python deploy/diagnostico_footer.py /tmp/diagnostico.pdf
-"""
+
 import sys
 
 import pymupdf as fitz

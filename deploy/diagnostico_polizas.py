@@ -1,11 +1,4 @@
-"""Diagnostico: cuenta cuantas polizas distintas ('# DE POLIZA SORT-XXXX')
-trae un mismo archivo PDF, y en que paginas empieza cada una -para
-confirmar si un solo archivo .pdf puede traer varias polizas concatenadas
-(cada una con su propio total/codificacion/firma en medio del documento,
-no solo al final).
 
-Uso: venv/bin/python deploy/diagnostico_polizas.py /tmp/debug_subidas/Electro_MNK_082026.pdf
-"""
 import re
 import sys
 

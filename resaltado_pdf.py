@@ -1,11 +1,3 @@
-"""
-resaltado_pdf.py
-
-Busca nombres o cédulas dentro de PDFs de planillas y les agrega
-resaltado, sin tocar el resto del documento (mismo formato, mismas
-fuentes, etc.).
-"""
-
 import io
 import unicodedata
 from dataclasses import dataclass
@@ -42,11 +34,7 @@ def _variantes_ene(texto: str) -> list[str]:
 
 
 def _buscar_con_variantes(pagina, texto: str, textpage=None):
-    """Prueba el texto tal cual, normalizado y con variantes de Ñ.
-
-    textpage se puede pasar ya extraído (page.get_textpage()) para no
-    reextraerlo en cada búsqueda dentro de la misma página.
-    """
+  
     coincidencias = pagina.search_for(texto, quads=False, textpage=textpage)
     if coincidencias:
         return coincidencias
@@ -64,9 +52,7 @@ def _buscar_con_variantes(pagina, texto: str, textpage=None):
 
 
 def _todas_las_palabras_en_texto(texto_norm: str, palabras: list[str]) -> bool:
-    """Chequeo rápido antes de meterse a buscar con PyMuPDF: si alguna
-    palabra ni aparece en el texto de la página, ahí no hay nada que
-    buscar."""
+   
     if not palabras:
         return False
     return all(
@@ -76,10 +62,6 @@ def _todas_las_palabras_en_texto(texto_norm: str, palabras: list[str]) -> bool:
 
 
 def _puede_aparecer_en_pagina(texto_pagina_norm: str, texto: str, palabras: list[str]) -> bool:
-    """Igual idea que _todas_las_palabras_en_texto pero probando primero
-    la frase completa. Con miles de nombres este filtro barato ahorra
-    mandar a buscar con search_for los que de plano no están en la
-    página."""
     candidatos_frase = [_normalizar(texto), *[_normalizar(v) for v in _variantes_ene(texto)]]
     if any(c in texto_pagina_norm for c in candidatos_frase):
         return True
@@ -94,13 +76,7 @@ _ALTURA_MAXIMA_FILA_SIN_VECINA = 45  # puntos: tope cuando no hay otra fila abaj
 def _limites_fila_por_anclas_vecinas(
     y0_objetivo: float, y0s_anclas_pagina: list[float],
 ) -> tuple[float | None, float | None]:
-    """Punto medio hacia el ancla anterior y hacia la siguiente en la
-    página (ambas ordenadas), para usar como techo/piso seguro de una
-    fila -en tablas con filas muy apretadas, o con una celda que se
-    envuelve a dos líneas (ej. un puesto largo como "Guardias de
-    protección"), el margen fijo de _TOLERANCIA_FILA puede arrastrar una
-    palabra de la fila de al lado. Devuelve (None, None) si no hay ancla
-    vecina de ese lado."""
+
     anteriores = [y for y in y0s_anclas_pagina if y < y0_objetivo]
     siguientes = [y for y in y0s_anclas_pagina if y > y0_objetivo]
     limite_superior = (anteriores[-1] + y0_objetivo) / 2 if anteriores else None
@@ -555,11 +531,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     pixmaps_pie_por_archivo: dict[str, list[tuple]] = {}
 
     def _pixmaps_pie_de_poliza(ruta_pdf_saliente: str) -> list[tuple]:
-        """Renderiza el pie de página de esta póliza una sola vez (varios
-        clientes suelen compartirla) y lo guarda en caché como PNG. Se
-        copia como imagen porque en CCSS el total lo rellena la Oficina
-        Virtual como campo de formulario, y show_pdf_page no arrastra ese
-        valor."""
+     
         if ruta_pdf_saliente in pixmaps_pie_por_archivo:
             return pixmaps_pie_por_archivo[ruta_pdf_saliente]
 
@@ -724,14 +696,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 textpage = pagina.get_textpage()
                 palabras = pagina.get_text("words", textpage=textpage)
 
-                # Y de todas las filas de datos reales de esta página (ver
-                # _y0s_anclas_fila), para usar como techo/piso natural
-                # entre filas (ver _limites_fila_por_anclas_vecinas). No se
-                # filtra contra mapa_cedulas: si solo contáramos las
-                # cédulas que SÍ están en este Excel, las filas de
-                # empleados de otros clientes -que son la mayoría en una
-                # póliza grande- no cuentan como vecinas y no habría nada
-                # contra qué recortar.
+                
                 y0s_cedulas_pagina = _y0s_anclas_fila(pagina, textpage=textpage)
 
                 franjas_vistas: dict[str, list] = {}
@@ -745,11 +710,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                     clave_cedula_hallada = _normalizar_cedula(digitos)
                     if clave_cedula_hallada not in mapa_cedulas and len(digitos) > 1:
                         clave_cedula_hallada = _normalizar_cedula(digitos[1:])
-                    # si lo que apareció en el PDF fue el número de
-                    # asegurado (no la cédula/DIMEX del Excel), se reporta
-                    # de todos modos bajo la cédula real de la persona -así
-                    # cuadra con la fila de registros_unicos y no aparece
-                    # como un empleado aparte
+                   
                     clave_cedula = mapa_id_a_cedula_real.get(clave_cedula_hallada, clave_cedula_hallada)
                     hallado_por_numero_asegurado = clave_cedula != clave_cedula_hallada
 
@@ -762,13 +723,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                     if limite_inferior is not None:
                         fila_y1 = min(fila_y1, limite_inferior)
                     else:
-                        # sin un empleado siguiente contra qué recortar
-                        # (ej. es el último de la página), un alto sin
-                        # límite es peligroso: si algo del pie de página
-                        # cae dentro de la tolerancia por pura
-                        # coincidencia, se arrastraría el total/firma
-                        # completos. Se limita a un alto generoso (varias
-                        # líneas envueltas) pero acotado.
+                        
                         fila_y1 = min(fila_y1, fila_y0 + _ALTURA_MAXIMA_FILA_SIN_VECINA)
 
                     franja = fitz.Rect(pagina.rect.x0, fila_y0 - 2, pagina.rect.x1, fila_y1 + 2)
@@ -838,10 +793,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
             "numero_asegurado": datos.get("numero_asegurado", ""),
             "polizas": polizas,
             "encontrado": encontrado,
-            # "cedula": calzó por número de identificación; "numero_asegurado":
-            # la CCSS lo imprime bajo su número de asegurado en vez del DIMEX
-            # (normal en extranjeros, no hace falta revisarlo); None: no se
-            # encontró por ninguno de los dos
+            
             "encontrado_por": (
                 "numero_asegurado" if clave in encontrados_por_numero_asegurado else "cedula"
             ) if encontrado else None,
