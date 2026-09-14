@@ -865,19 +865,7 @@ def resaltar_por_cedula_sin_recortar(
     registros: list[dict],
     carpeta_salida: str,
 ) -> dict:
-    """Identifica a cada oficial igual que
-    resaltar_por_cedula_y_exportar_por_cliente (por cédula, con el número
-    de asegurado como respaldo para extranjeros), pero sin recortar ni
-    fusionar nada: resalta la fila encontrada directamente sobre una copia
-    COMPLETA del PDF original -mismas páginas, mismo orden, sin tocar nada
-    más- en vez de armar un documento nuevo por cliente. Entrega un PDF por
-    cada archivo de entrada, no uno por cliente.
-
-    Pensado para cuando hace falta el PDF de la aseguradora intacto, con
-    las filas de los oficiales de cada cliente marcadas en amarillo, sin
-    fusionar ni recortar nada -por ejemplo, para un trámite donde no se
-    puede alterar el formato original del documento.
-    """
+    
     registros_unicos: dict[tuple[str, str], dict] = {}
     for r in registros:
         cedula, cliente = r.get("cedula"), r.get("cliente")

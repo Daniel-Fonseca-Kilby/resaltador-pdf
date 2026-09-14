@@ -227,12 +227,7 @@ def _combinar_nombres(texto_nombres: str, archivo_excel) -> list[str]:
 
 
 # sinónimos normalizados (sin tildes, mayúsculas), en orden de prioridad:
-# si el Excel trae varias columnas que calzan, gana la más específica de
-# la lista, sin importar cuál esté más a la izquierda.
-#
-# "EMPRESA" no cuenta como sinónimo de cliente a propósito: en las
-# planillas de VMA esa columna es una unidad interna (Comer, Servicios,
-# etc.) que no tiene que ver con a quién se le factura.
+
 _SINONIMOS_CEDULA = ["IDENTIFICACION", "CEDULA", "ID", "DOCUMENTO", "IDENTIFICACION FISCAL", "NUMERO"]
 _SINONIMOS_CLIENTE = ["CLIENTE", "CUENTA"]
 _SINONIMOS_NOMBRE = ["NOMBRE", "NOMBRES", "EMPLEADO", "COLABORADOR", "NOMBRE COMPLETO"]
