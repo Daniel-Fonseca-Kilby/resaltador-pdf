@@ -11,6 +11,7 @@ from resaltado_pdf import (
     _franjas_pie_de_pagina,
     _recortar_total_antes_de_leyenda,
     _techo_de_datos,
+    resaltar_por_cedula_sin_recortar,
     resaltar_por_cedula_y_exportar_por_cliente,
 )
 
@@ -1038,4 +1039,143 @@ def test_exportar_por_cliente_con_resaltado_agrega_anotacion(ruta_pdf_ejemplo, r
         assert pagina.first_annot.type[0] == fitz.PDF_ANNOT_HIGHLIGHT
     finally:
         documento.close()
+
+
+# --- resaltar_por_cedula_sin_recortar ("Solo resaltar, sin recortar ni
+# separar por cliente") ------------------------------------------------
+
+
+def test_solo_resaltar_mantiene_el_pdf_completo_e_intacto(ruta_pdf_ejemplo, registros_ejemplo, tmp_path):
+    """A diferencia del modo por cliente, acá no se recorta ni se fusiona
+    nada -el PDF de salida debe tener las mismas páginas y el mismo texto
+    que el original (encabezado, filas de todos los clientes, todo)."""
+    resultado = resaltar_por_cedula_sin_recortar(
+        [ruta_pdf_ejemplo], registros_ejemplo, str(tmp_path / "salida")
+    )
+
+    nombre_archivo = Path(ruta_pdf_ejemplo).name
+    assert nombre_archivo in resultado["archivos_resaltados"]
+
+    documento_original = fitz.open(ruta_pdf_ejemplo)
+    documento_salida = fitz.open(resultado["archivos_resaltados"][nombre_archivo])
+    try:
+        assert documento_salida.page_count == documento_original.page_count
+        for pagina_original, pagina_salida in zip(documento_original, documento_salida):
+            assert pagina_salida.get_text() == pagina_original.get_text()
+    finally:
+        documento_original.close()
+        documento_salida.close()
+
+
+def test_solo_resaltar_agrega_una_anotacion_por_fila_encontrada(ruta_pdf_ejemplo, registros_ejemplo, tmp_path):
+    """registros_ejemplo trae 3 cédulas que sí aparecen en el PDF (Juan,
+    Maria Jose y Luis) y una que no (999999999) -deben quedar exactamente
+    3 filas resaltadas, ni una de más ni de menos."""
+    resultado = resaltar_por_cedula_sin_recortar(
+        [ruta_pdf_ejemplo], registros_ejemplo, str(tmp_path / "salida")
+    )
+
+    nombre_archivo = Path(ruta_pdf_ejemplo).name
+    documento_salida = fitz.open(resultado["archivos_resaltados"][nombre_archivo])
+    try:
+        anotaciones = list(documento_salida[0].annots())
+        assert len(anotaciones) == 3
+        assert all(a.type[0] == fitz.PDF_ANNOT_HIGHLIGHT for a in anotaciones)
+    finally:
+        documento_salida.close()
+
+
+def test_solo_resaltar_entrega_un_pdf_por_archivo_no_por_cliente(ruta_pdf_ejemplo, registros_ejemplo, tmp_path):
+    """registros_ejemplo reparte sus cédulas encontradas entre DOS
+    clientes distintos (Cliente Prueba Uno y Cliente Prueba Dos), pero
+    todos están en el MISMO archivo de origen -debe salir un solo PDF de
+    salida, no uno por cliente."""
+    resultado = resaltar_por_cedula_sin_recortar(
+        [ruta_pdf_ejemplo], registros_ejemplo, str(tmp_path / "salida")
+    )
+
+    assert len(resultado["archivos_resaltados"]) == 1
+
+
+def test_solo_resaltar_reporta_cedulas_no_encontradas(ruta_pdf_ejemplo, registros_ejemplo, tmp_path):
+    resultado = resaltar_por_cedula_sin_recortar(
+        [ruta_pdf_ejemplo], registros_ejemplo, str(tmp_path / "salida")
+    )
+
+    cedulas_no_encontradas = {r["cedula"] for r in resultado["no_encontrados"]}
+    assert cedulas_no_encontradas == {"999999999"}
+
+
+def test_solo_resaltar_encuentra_extranjero_por_numero_de_asegurado(tmp_path):
+    """Mismo caso real de la CCSS que en el modo por cliente: el DIMEX no
+    aparece en el PDF, pero el número de asegurado sí -debe encontrarse
+    igual en este modo, sin necesitar recorte."""
+    ruta_poliza = tmp_path / "poliza_ccss.pdf"
+    _crear_pdf_planilla(
+        ruta_poliza,
+        "EMPRESA CCSS EXTRANJERO",
+        filas_por_pagina=[[("905550003", "MARIA", "GOMEZ TORRES", "Ninguna")]],
+    )
+    registros = [
+        {
+            "cedula": "155812345678",  # DIMEX -no aparece en el PDF
+            "cliente": "Cliente Extranjero",
+            "nombre": "Maria Gomez Torres",
+            "numero_asegurado": "905550003",  # el número que sí imprime la CCSS
+        },
+    ]
+
+    resultado = resaltar_por_cedula_sin_recortar(
+        [str(ruta_poliza)], registros, str(tmp_path / "salida")
+    )
+
+    assert resultado["no_encontrados"] == []
+    detalle = resultado["detalle_registros"][0]
+    assert detalle["encontrado"] is True
+    assert detalle["encontrado_por"] == "numero_asegurado"
+    assert detalle["cedula"] == "155812345678"
+
+    nombre_archivo = Path(ruta_poliza).name
+    documento = fitz.open(resultado["archivos_resaltados"][nombre_archivo])
+    try:
+        assert "GOMEZ" in documento[0].get_text()
+        assert len(list(documento[0].annots())) == 1
+    finally:
+        documento.close()
+
+
+def test_solo_resaltar_varios_archivos_da_un_pdf_por_cada_uno(tmp_path):
+    ruta_poliza_a = tmp_path / "poliza_a.pdf"
+    ruta_poliza_b = tmp_path / "poliza_b.pdf"
+    _crear_pdf_planilla(ruta_poliza_a, "EMPRESA POLIZA A", [[("111111111", "JUAN", "PEREZ MORA", "Ninguna")]])
+    _crear_pdf_planilla(ruta_poliza_b, "EMPRESA POLIZA B", [[("222222222", "MARIA", "SOLANO MORA", "Ninguna")]])
+
+    registros = [
+        {"cedula": "111111111", "cliente": "Cliente Multi Archivo", "nombre": "Juan Perez"},
+        {"cedula": "222222222", "cliente": "Cliente Multi Archivo", "nombre": "Maria Solano"},
+    ]
+
+    resultado = resaltar_por_cedula_sin_recortar(
+        [str(ruta_poliza_a), str(ruta_poliza_b)], registros, str(tmp_path / "salida")
+    )
+
+    assert set(resultado["archivos_resaltados"]) == {"poliza_a.pdf", "poliza_b.pdf"}
+    assert resultado["no_encontrados"] == []
+
+
+def test_solo_resaltar_pdf_con_contrasena_se_reporta_como_error_sin_tumbar_el_proceso(tmp_path):
+    documento = fitz.open()
+    documento.new_page()
+    ruta = tmp_path / "protegido.pdf"
+    documento.save(str(ruta), encryption=fitz.PDF_ENCRYPT_AES_256, user_pw="clave123")
+    documento.close()
+
+    resultado = resaltar_por_cedula_sin_recortar(
+        [str(ruta)],
+        [{"cedula": "111111111", "cliente": "Cliente X"}],
+        str(tmp_path / "salida"),
+    )
+
+    assert "protegido.pdf" in resultado["errores_por_archivo"]
+    assert resultado["archivos_resaltados"] == {}
 

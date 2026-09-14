@@ -860,6 +860,162 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     }
 
 
+def resaltar_por_cedula_sin_recortar(
+    rutas_pdfs: list[str],
+    registros: list[dict],
+    carpeta_salida: str,
+) -> dict:
+    """Identifica a cada oficial igual que
+    resaltar_por_cedula_y_exportar_por_cliente (por cédula, con el número
+    de asegurado como respaldo para extranjeros), pero sin recortar ni
+    fusionar nada: resalta la fila encontrada directamente sobre una copia
+    COMPLETA del PDF original -mismas páginas, mismo orden, sin tocar nada
+    más- en vez de armar un documento nuevo por cliente. Entrega un PDF por
+    cada archivo de entrada, no uno por cliente.
+
+    Pensado para cuando hace falta el PDF de la aseguradora intacto, con
+    las filas de los oficiales de cada cliente marcadas en amarillo, sin
+    fusionar ni recortar nada -por ejemplo, para un trámite donde no se
+    puede alterar el formato original del documento.
+    """
+    registros_unicos: dict[tuple[str, str], dict] = {}
+    for r in registros:
+        cedula, cliente = r.get("cedula"), r.get("cliente")
+        if not cedula or not cliente:
+            continue
+        clave = (_normalizar_cedula(cedula), cliente)
+        if clave not in registros_unicos:
+            registros_unicos[clave] = {
+                "cedula": cedula,
+                "cliente": cliente,
+                "nombre": r.get("nombre", ""),
+                "numero_asegurado": r.get("numero_asegurado", ""),
+            }
+
+    mapa_cedulas: dict[str, list[str]] = {}
+    mapa_id_a_cedula_real: dict[str, str] = {}
+    for clave_cedula, cliente in registros_unicos:
+        clientes = mapa_cedulas.setdefault(clave_cedula, [])
+        if cliente not in clientes:
+            clientes.append(cliente)
+        mapa_id_a_cedula_real.setdefault(clave_cedula, clave_cedula)
+
+        numero_asegurado_raw = registros_unicos[(clave_cedula, cliente)].get("numero_asegurado")
+        if numero_asegurado_raw:
+            numero_asegurado = _normalizar_cedula(numero_asegurado_raw)
+            clientes_asegurado = mapa_cedulas.setdefault(numero_asegurado, [])
+            if cliente not in clientes_asegurado:
+                clientes_asegurado.append(cliente)
+            mapa_id_a_cedula_real.setdefault(numero_asegurado, clave_cedula)
+
+    polizas_encontradas: dict[tuple[str, str], set] = {}
+    encontrados_por_numero_asegurado: set = set()
+    errores_por_archivo: dict[str, str] = {}
+    archivos_resaltados: dict[str, str] = {}
+
+    carpeta = Path(carpeta_salida)
+    carpeta.mkdir(parents=True, exist_ok=True)
+
+    for ruta_pdf in rutas_pdfs:
+        nombre_archivo = Path(ruta_pdf).name
+        try:
+            documento = fitz.open(ruta_pdf)
+        except Exception as error:
+            errores_por_archivo[nombre_archivo] = f"No se pudo abrir el archivo: {error}"
+            continue
+
+        if documento.is_encrypted:
+            documento.close()
+            errores_por_archivo[nombre_archivo] = (
+                "El PDF está protegido con contraseña. Quite la protección e inténtelo de nuevo."
+            )
+            continue
+
+        try:
+            for pagina in documento:
+                textpage = pagina.get_textpage()
+                palabras = pagina.get_text("words", textpage=textpage)
+                y0s_cedulas_pagina = _y0s_anclas_fila(pagina, textpage=textpage)
+
+                franjas_ya_resaltadas: list = []
+                for x0, y0, x1, y1, palabra, *_resto in palabras:
+                    digitos = "".join(c for c in palabra if c.isdigit())
+                    if not digitos:
+                        continue
+                    clientes = _coincide_cliente(digitos, mapa_cedulas)
+                    if not clientes:
+                        continue
+                    clave_cedula_hallada = _normalizar_cedula(digitos)
+                    if clave_cedula_hallada not in mapa_cedulas and len(digitos) > 1:
+                        clave_cedula_hallada = _normalizar_cedula(digitos[1:])
+                    clave_cedula = mapa_id_a_cedula_real.get(clave_cedula_hallada, clave_cedula_hallada)
+                    hallado_por_numero_asegurado = clave_cedula != clave_cedula_hallada
+
+                    fila_y0 = min(w[1] for w in palabras if abs(w[1] - y0) <= _TOLERANCIA_FILA)
+                    fila_y1 = max(w[3] for w in palabras if abs(w[1] - y0) <= _TOLERANCIA_FILA)
+
+                    limite_superior, limite_inferior = _limites_fila_por_anclas_vecinas(y0, y0s_cedulas_pagina)
+                    if limite_superior is not None:
+                        fila_y0 = max(fila_y0, limite_superior)
+                    if limite_inferior is not None:
+                        fila_y1 = min(fila_y1, limite_inferior)
+                    else:
+                        fila_y1 = min(fila_y1, fila_y0 + _ALTURA_MAXIMA_FILA_SIN_VECINA)
+
+                    franja = fitz.Rect(pagina.rect.x0, fila_y0 - 2, pagina.rect.x1, fila_y1 + 2)
+
+                    for cliente in clientes:
+                        polizas_encontradas.setdefault((clave_cedula, cliente), set()).add(nombre_archivo)
+                        if hallado_por_numero_asegurado:
+                            encontrados_por_numero_asegurado.add((clave_cedula, cliente))
+
+                    # el resaltado en sí no depende del cliente -si la
+                    # misma fila calzó para más de uno, se marca una sola
+                    # vez, no una anotación encimada por cada cliente
+                    if franja in franjas_ya_resaltadas:
+                        continue
+                    franjas_ya_resaltadas.append(franja)
+                    anotacion = pagina.add_highlight_annot(franja)
+                    anotacion.update()
+
+            ruta_salida = carpeta / f"{Path(nombre_archivo).stem}_resaltado.pdf"
+            documento.save(str(ruta_salida))
+            archivos_resaltados[nombre_archivo] = str(ruta_salida)
+        except Exception as error:
+            errores_por_archivo[nombre_archivo] = f"No se pudo procesar el archivo: {error}"
+        finally:
+            documento.close()
+
+    detalle_registros = []
+    for clave, datos in registros_unicos.items():
+        cliente = clave[1]
+        polizas = sorted(polizas_encontradas.get(clave, set()))
+        encontrado = bool(polizas)
+        detalle_registros.append({
+            "cedula": datos["cedula"],
+            "nombre": datos["nombre"],
+            "cliente": cliente,
+            "numero_asegurado": datos.get("numero_asegurado", ""),
+            "polizas": polizas,
+            "encontrado": encontrado,
+            "encontrado_por": (
+                "numero_asegurado" if clave in encontrados_por_numero_asegurado else "cedula"
+            ) if encontrado else None,
+        })
+
+    no_encontrados = [
+        {"cedula": d["cedula"], "cliente": d["cliente"], "nombre": d["nombre"]}
+        for d in detalle_registros if not d["encontrado"]
+    ]
+
+    return {
+        "archivos_resaltados": archivos_resaltados,
+        "no_encontrados": no_encontrados,
+        "errores_por_archivo": errores_por_archivo,
+        "detalle_registros": detalle_registros,
+    }
+
+
 def generar_pdf_resumen(titulo: str, secciones: list[tuple[str, list[str]]]) -> bytes:
     """PDF simple de texto con listas por sección (cédulas no encontradas,
     archivos con error, etc.), para meter dentro del zip."""

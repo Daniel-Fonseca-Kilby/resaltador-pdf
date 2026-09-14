@@ -662,8 +662,18 @@
           <input type="checkbox" id="chkResaltar" checked>
           <span class="texto-checkbox">Resaltar filas con franja amarilla</span>
         </label>
-        <p class="hint">
+        <p class="hint" id="hintResaltar">
           Solo aplica al PDF fusionado por cliente. Si lo desmarca, el PDF se genera con las filas recortadas en su apariencia original, sin marcas amarillas encima (ideal para trámites formales ante clientes o auditorías).
+        </p>
+      </div>
+
+      <div class="campo">
+        <label class="contenedor-checkbox">
+          <input type="checkbox" id="chkSoloResaltar">
+          <span class="texto-checkbox">Solo resaltar, sin recortar ni separar por cliente</span>
+        </label>
+        <p class="hint">
+          Solo aplica cuando se filtra por Identificación y Cliente. Si lo marca, cada PDF de entrada se entrega completo e intacto (todas sus páginas, tal cual venía), solo con las filas de los oficiales de cada cliente resaltadas en amarillo -en vez de generar un PDF nuevo fusionado y recortado por cliente. Al activarlo, "Tipo de planilla" y "Resaltar filas" dejan de aplicar (el resaltado siempre queda encendido, porque es lo único que hace este modo).
         </p>
       </div>
 
@@ -729,6 +739,21 @@ const enlaceDescarga = document.getElementById("descarga");
 const barraProgreso = document.getElementById("barraProgreso");
 
 const MAX_BYTES_TOTAL = 60 * 1024 * 1024; // debe coincidir con MAX_CONTENT_LENGTH en api/index.py
+
+// "Solo resaltar" deja sin efecto el tipo de planilla y el checkbox de
+// resaltado (el resaltado queda siempre encendido en ese modo) -se
+// deshabilitan visualmente para que no parezca que sí hacen algo
+const chkSoloResaltar = document.getElementById("chkSoloResaltar");
+const selectFormato = document.getElementById("formato");
+const chkResaltar = document.getElementById("chkResaltar");
+
+function actualizarDisponibilidadSegunSoloResaltar() {
+  const activo = chkSoloResaltar.checked;
+  selectFormato.disabled = activo;
+  chkResaltar.disabled = activo;
+}
+chkSoloResaltar.addEventListener("change", actualizarDisponibilidadSegunSoloResaltar);
+actualizarDisponibilidadSegunSoloResaltar();
 
 function limpiarResultado() {
   resultado.innerHTML = "";
@@ -1006,12 +1031,15 @@ function construirListaNoEncontrados(noEncontrados) {
   return detalles;
 }
 
-function mostrarResultadoClienteResumen(totalClientes, totalErrores, totalNoEncontrados, noEncontrados) {
+function mostrarResultadoClienteResumen(totalClientes, totalErrores, totalNoEncontrados, noEncontrados, sinRecorte = false) {
   limpiarResultado();
   const hayProblemas = totalErrores > 0 || totalNoEncontrados > 0;
+  const titulo = sinRecorte
+    ? `Se resaltaron ${totalClientes} PDF(s), sin recortar ni separar por cliente`
+    : `Se generaron ${totalClientes} PDF(s) por cliente`;
   resultado.appendChild(nodoConIcono(
     hayProblemas ? ICONS.alerta : ICONS.check,
-    `Se generaron ${totalClientes} PDF(s) por cliente`,
+    titulo,
     `resultado-resumen ${hayProblemas ? "advertencia" : "exito"}`
   ));
 
@@ -1032,11 +1060,7 @@ function mostrarResultadoClienteResumen(totalClientes, totalErrores, totalNoEnco
   }
 }
 
-// --- Vista previa por archivo (RQ-13) -----------------------------------
-// El zip ya llega completo como Blob en memoria del navegador; en vez de
-// obligar a descargarlo/descomprimirlo a mano para ver un PDF, se lee acá
-// mismo con JSZip y cada archivo se abre en una pestaña nueva con una URL
-// temporal (URL.createObjectURL) -no hay ningún cambio en el servidor.
+
 const NOMBRES_RESUMEN_EXCLUIDOS = /^Resumen(_Modo_Simple)?\.pdf$/i;
 
 async function construirListaPdfsDelZip(blobZip) {
@@ -1128,8 +1152,7 @@ async function abrirPdfDelZip(zip, nombre, boton, descargar) {
 }
 
 function decodificarListaB64(valor) {
-  // valor es base64 de un JSON UTF-8 -atob() solo decodifica a Latin-1,
-  // por eso hay que pasar los bytes por TextDecoder para no reventar tildes/ñ
+
   if (!valor) return null;
   try {
     const binario = atob(valor);
@@ -1174,6 +1197,7 @@ btn.addEventListener("click", async () => {
   datos.append("nombres", nombres);
   datos.append("formato", document.getElementById("formato").value);
   datos.append("resaltar", document.getElementById("chkResaltar").checked ? "true" : "false");
+  datos.append("solo_resaltar", document.getElementById("chkSoloResaltar").checked ? "true" : "false");
   if (excel) {
     datos.append("excel", excel);
   }
@@ -1193,8 +1217,6 @@ btn.addEventListener("click", async () => {
     const respuesta = await fetch("/api/procesar", { method: "POST", body: datos });
     const tipoContenido = respuesta.headers.get("Content-Type") || "";
 
-    // ahora cualquier error (o alguna respuesta inesperada) es lo único
-    // que viaja como JSON -el éxito, en los dos modos, es el zip directo
     if (tipoContenido.includes("application/json")) {
       let cuerpo;
       try {
@@ -1216,13 +1238,13 @@ btn.addEventListener("click", async () => {
     }
 
     const modo = respuesta.headers.get("X-Modo") || "simple";
-    if (modo === "cliente") {
+    if (modo === "cliente" || modo === "cliente_sin_recorte") {
       const totalClientes = Number(respuesta.headers.get("X-Total-Clientes") || 0);
       const totalErrores = Number(respuesta.headers.get("X-Total-Errores") || 0);
       const totalNoEncontrados = Number(respuesta.headers.get("X-Total-No-Encontrados") || 0);
       const noEncontrados = decodificarListaB64(respuesta.headers.get("X-No-Encontrados-B64"));
-      console.log(`[resaltador] listo: modo=cliente, ${totalClientes} PDF(s), ${totalErrores} error(es), ${totalNoEncontrados} no encontrados`);
-      mostrarResultadoClienteResumen(totalClientes, totalErrores, totalNoEncontrados, noEncontrados);
+      console.log(`[resaltador] listo: modo=${modo}, ${totalClientes} PDF(s), ${totalErrores} error(es), ${totalNoEncontrados} no encontrados`);
+      mostrarResultadoClienteResumen(totalClientes, totalErrores, totalNoEncontrados, noEncontrados, modo === "cliente_sin_recorte");
     } else {
       const totalArchivos = Number(respuesta.headers.get("X-Total-Archivos") || 0);
       const totalErrores = Number(respuesta.headers.get("X-Total-Errores") || 0);

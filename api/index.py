@@ -27,6 +27,7 @@ from resaltado_pdf import (
     generar_excel_resumen,
     generar_pdf_resumen,
     resaltar_nombres_en_pdf,
+    resaltar_por_cedula_sin_recortar,
     resaltar_por_cedula_y_exportar_por_cliente,
 )
 
@@ -54,10 +55,6 @@ def _guardar_copia_debug(ruta_origen: Path, nombre_archivo: str) -> None:
 
 
 def _limpiar_temporales_antiguos(segundos_vida: int = 3600) -> int:
-    """Borra carpetas temporales huérfanas (prefijo 'resaltado_') más
-    viejas que segundos_vida. Si una solicitud se cae a mitad de camino
-    su carpeta queda sin borrar, y con el tiempo eso llena el disco de
-    Render. Devuelve cuántas se borraron."""
     limite = time.time() - segundos_vida
     temp_dir = Path(tempfile.gettempdir())
     borradas = 0
@@ -171,9 +168,7 @@ def _detectar_delimitador(texto: str) -> str:
 
 
 def _filas_desde_archivo(archivo):
-    """Generador de filas, venga el archivo en .xlsx/.xlsm o en .csv, para
-    que el resto del código (sinónimos de columnas, extracción de
-    cédula/nombre) no tenga que preocuparse por el formato de origen."""
+    
     nombre = Path(archivo.filename).name.lower()
     archivo.seek(0)
 
@@ -284,16 +279,7 @@ def _extraer_cedula_limpia(valor) -> str:
 
 
 def _registros_desde_excel(archivo):
-    """Si trae columna de cédula y de cliente (con sus sinónimos), arma
-    un registro por fila para Modo Cliente. Si es de una sola columna, se
-    asume lista de nombres y devuelve None para que el llamador use Modo
-    Simple. Si tiene varias columnas pero ninguna calza, mejor un error
-    claro que degradar en silencio -seguramente el usuario quería Modo
-    Cliente y algo no calzó.
-
-    La columna de número de asegurado es opcional -si no viene, no pasa
-    nada; si viene, solo debería tener valor para extranjeros (la CCSS los
-    imprime en la planilla bajo ese número, no bajo el DIMEX del Excel)."""
+    
     filas = _filas_desde_archivo(archivo)
 
     encabezado = next(filas, None)
@@ -471,7 +457,9 @@ _FORMATOS_VALIDOS = {"auto", "ccss", "mnk", "ins"}
 _LIMITE_BYTES_NO_ENCONTRADOS_HEADER = 4000
 
 
-def _procesar_modo_cliente(registros: list[dict], archivos, formato: str, resaltar_filas: bool = True):
+def _procesar_modo_cliente(
+    registros: list[dict], archivos, formato: str, resaltar_filas: bool = True, solo_resaltar: bool = False,
+):
     carpeta_temporal = Path(tempfile.mkdtemp(prefix="resaltado_cliente_"))
     carpeta_entrada = carpeta_temporal / "entrada"
     carpeta_entrada.mkdir(parents=True, exist_ok=True)
@@ -496,9 +484,18 @@ def _procesar_modo_cliente(registros: list[dict], archivos, formato: str, resalt
             return jsonify(error="Ninguno de los archivos subidos es un PDF válido."), 400
 
         try:
-            resultado = resaltar_por_cedula_y_exportar_por_cliente(
-                rutas_entrada, registros, str(carpeta_salida), formato, resaltar_filas=resaltar_filas
-            )
+            if solo_resaltar:
+                # sin recorte ni fusión: cada PDF de entrada queda intacto,
+                # solo con las filas encontradas resaltadas -no aplica el
+                # ajuste fino de encabezado/pie de página por formato,
+                # porque no se corta nada
+                resultado = resaltar_por_cedula_sin_recortar(rutas_entrada, registros, str(carpeta_salida))
+                archivos_generados = resultado["archivos_resaltados"]
+            else:
+                resultado = resaltar_por_cedula_y_exportar_por_cliente(
+                    rutas_entrada, registros, str(carpeta_salida), formato, resaltar_filas=resaltar_filas
+                )
+                archivos_generados = resultado["archivos_por_cliente"]
         except Exception as error:
             app.logger.error("modo cliente: no se pudo procesar el lote: %s", error)
             return jsonify(error=f"No se pudieron procesar los PDFs: {error}"), 500
@@ -520,7 +517,7 @@ def _procesar_modo_cliente(registros: list[dict], archivos, formato: str, resalt
         archivo_zip_temporal.close()
 
         with zipfile.ZipFile(ruta_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-            for _cliente, ruta_pdf in sorted(resultado["archivos_por_cliente"].items()):
+            for _clave, ruta_pdf in sorted(archivos_generados.items()):
                 zf.write(ruta_pdf, arcname=Path(ruta_pdf).name)
             if no_encontrados or errores_archivos:
                 resumen_pdf = generar_pdf_resumen(
@@ -538,10 +535,10 @@ def _procesar_modo_cliente(registros: list[dict], archivos, formato: str, resalt
     finally:
         shutil.rmtree(carpeta_temporal, ignore_errors=True)
 
-    total_clientes = len(resultado["archivos_por_cliente"])
+    total_archivos_generados = len(archivos_generados)
     app.logger.info(
-        "modo cliente: %d PDF(s) generados, %d error(es), %d cédula(s) no encontradas",
-        total_clientes, len(errores_archivos), len(no_encontrados),
+        "modo cliente (solo_resaltar=%s): %d PDF(s) generados, %d error(es), %d cédula(s) no encontradas",
+        solo_resaltar, total_archivos_generados, len(errores_archivos), len(no_encontrados),
     )
 
     @after_this_request
@@ -553,10 +550,10 @@ def _procesar_modo_cliente(registros: list[dict], archivos, formato: str, resalt
         str(ruta_zip),
         mimetype="application/zip",
         as_attachment=True,
-        download_name="pdfs_por_cliente.zip",
+        download_name="pdfs_resaltados_sin_recorte.zip" if solo_resaltar else "pdfs_por_cliente.zip",
     )
-    respuesta.headers["X-Modo"] = "cliente"
-    respuesta.headers["X-Total-Clientes"] = str(total_clientes)
+    respuesta.headers["X-Modo"] = "cliente_sin_recorte" if solo_resaltar else "cliente"
+    respuesta.headers["X-Total-Clientes"] = str(total_archivos_generados)
     respuesta.headers["X-Total-Errores"] = str(len(errores_archivos))
     respuesta.headers["X-Total-No-Encontrados"] = str(len(no_encontrados))
 
@@ -599,7 +596,11 @@ def procesar():
                 formato = "auto"
             resaltar_param = request.form.get("resaltar", "true").strip().lower()
             resaltar_filas = resaltar_param in ("true", "1", "on", "yes")
-            return _procesar_modo_cliente(registros, archivos, formato, resaltar_filas=resaltar_filas)
+            solo_resaltar_param = request.form.get("solo_resaltar", "false").strip().lower()
+            solo_resaltar = solo_resaltar_param in ("true", "1", "on", "yes")
+            return _procesar_modo_cliente(
+                registros, archivos, formato, resaltar_filas=resaltar_filas, solo_resaltar=solo_resaltar,
+            )
 
         texto_nombres = request.form.get("nombres", "").strip()
         nombres = _combinar_nombres(texto_nombres, archivo_excel)
