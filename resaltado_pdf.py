@@ -1,6 +1,7 @@
 import io
 import unicodedata
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import openpyxl
@@ -16,6 +17,7 @@ class ResultadoResaltado:
     ruta_salida: str
 
 
+@lru_cache(maxsize=4096)
 def _normalizar(texto: str) -> str:
     """Mayúsculas y sin tildes, para comparar sin depender del acento."""
     texto = texto.strip().upper()
@@ -385,14 +387,13 @@ _MARGEN_PAGINA = 24  # margen arriba/abajo de cada página de salida
 _ESPACIO_ENTRE_FILAS = 3
 
 
-def resaltar_por_cedula_y_exportar_por_cliente(
-    rutas_pdfs: list[str],
-    registros: list[dict],
-    carpeta_salida: str,
-    formato: str = "auto",
-    resaltar_filas: bool = True,
-) -> dict:
-    
+def _construir_mapas_cedula(registros: list[dict]) -> tuple[dict, dict, dict]:
+    """A partir de los registros del Excel/CSV arma:
+    - registros_unicos: un registro por (cédula, cliente), sin duplicados.
+    - mapa_cedulas: cédula normalizada (o número de asegurado) -> clientes que la reclaman.
+    - mapa_id_a_cedula_real: para reportar el número de asegurado bajo la cédula real del cliente.
+    Comparten esta lógica resaltar_por_cedula_y_exportar_por_cliente() y
+    resaltar_por_cedula_sin_recortar()."""
     registros_unicos: dict[tuple[str, str], dict] = {}
     for r in registros:
         cedula, cliente = r.get("cedula"), r.get("cliente")
@@ -407,7 +408,6 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 "numero_asegurado": r.get("numero_asegurado", ""),
             }
 
-    
     mapa_cedulas: dict[str, list[str]] = {}
     mapa_id_a_cedula_real: dict[str, str] = {}
     for clave_cedula, cliente in registros_unicos:
@@ -423,6 +423,85 @@ def resaltar_por_cedula_y_exportar_por_cliente(
             if cliente not in clientes_asegurado:
                 clientes_asegurado.append(cliente)
             mapa_id_a_cedula_real.setdefault(numero_asegurado, clave_cedula)
+
+    return registros_unicos, mapa_cedulas, mapa_id_a_cedula_real
+
+
+def _localizar_coincidencias_de_cedula(pagina, palabras: list, y0s_cedulas_pagina: list[float], mapa_cedulas: dict, mapa_id_a_cedula_real: dict):
+    """Recorre las palabras de una página y por cada una que calce con una
+    cédula/número de asegurado conocido, arma la franja de su fila. Comparten
+    esta lógica resaltar_por_cedula_y_exportar_por_cliente() y
+    resaltar_por_cedula_sin_recortar()."""
+    for x0, y0, x1, y1, palabra, *_resto in palabras:
+        digitos = "".join(c for c in palabra if c.isdigit())
+        if not digitos:
+            continue
+        clientes = _coincide_cliente(digitos, mapa_cedulas)
+        if not clientes:
+            continue
+        clave_cedula_hallada = _normalizar_cedula(digitos)
+        if clave_cedula_hallada not in mapa_cedulas and len(digitos) > 1:
+            clave_cedula_hallada = _normalizar_cedula(digitos[1:])
+
+        clave_cedula = mapa_id_a_cedula_real.get(clave_cedula_hallada, clave_cedula_hallada)
+        hallado_por_numero_asegurado = clave_cedula != clave_cedula_hallada
+
+        fila_y0 = min(w[1] for w in palabras if abs(w[1] - y0) <= _TOLERANCIA_FILA)
+        fila_y1 = max(w[3] for w in palabras if abs(w[1] - y0) <= _TOLERANCIA_FILA)
+
+        limite_superior, limite_inferior = _limites_fila_por_anclas_vecinas(y0, y0s_cedulas_pagina)
+        if limite_superior is not None:
+            fila_y0 = max(fila_y0, limite_superior)
+        if limite_inferior is not None:
+            fila_y1 = min(fila_y1, limite_inferior)
+        else:
+            fila_y1 = min(fila_y1, fila_y0 + _ALTURA_MAXIMA_FILA_SIN_VECINA)
+
+        franja = fitz.Rect(pagina.rect.x0, fila_y0 - 2, pagina.rect.x1, fila_y1 + 2)
+
+        yield franja, clientes, clave_cedula, hallado_por_numero_asegurado
+
+
+def _construir_detalle_registros(
+    registros_unicos: dict, polizas_encontradas: dict, encontrados_por_numero_asegurado: set,
+) -> tuple[list[dict], list[dict]]:
+    """Arma el detalle final por registro (para el Excel de Facturación) y
+    la lista de cédulas que no aparecieron en ningún PDF. Comparten esta
+    lógica resaltar_por_cedula_y_exportar_por_cliente() y
+    resaltar_por_cedula_sin_recortar()."""
+    detalle_registros = []
+    for clave, datos in registros_unicos.items():
+        cliente = clave[1]
+        polizas = sorted(polizas_encontradas.get(clave, set()))
+        encontrado = bool(polizas)
+        detalle_registros.append({
+            "cedula": datos["cedula"],
+            "nombre": datos["nombre"],
+            "cliente": cliente,
+            "numero_asegurado": datos.get("numero_asegurado", ""),
+            "polizas": polizas,
+            "encontrado": encontrado,
+            "encontrado_por": (
+                "numero_asegurado" if clave in encontrados_por_numero_asegurado else "cedula"
+            ) if encontrado else None,
+        })
+
+    no_encontrados = [
+        {"cedula": d["cedula"], "cliente": d["cliente"], "nombre": d["nombre"]}
+        for d in detalle_registros if not d["encontrado"]
+    ]
+
+    return detalle_registros, no_encontrados
+
+
+def resaltar_por_cedula_y_exportar_por_cliente(
+    rutas_pdfs: list[str],
+    registros: list[dict],
+    carpeta_salida: str,
+    formato: str = "auto",
+    resaltar_filas: bool = True,
+) -> dict:
+    registros_unicos, mapa_cedulas, mapa_id_a_cedula_real = _construir_mapas_cedula(registros)
 
     estado_por_cliente: dict[str, dict] = {}
     polizas_encontradas: dict[tuple[str, str], set] = {}
@@ -695,39 +774,12 @@ def resaltar_por_cedula_y_exportar_por_cliente(
             for pagina in documento:
                 textpage = pagina.get_textpage()
                 palabras = pagina.get_text("words", textpage=textpage)
-
-                
                 y0s_cedulas_pagina = _y0s_anclas_fila(pagina, textpage=textpage)
 
                 franjas_vistas: dict[str, list] = {}
-                for x0, y0, x1, y1, palabra, *_resto in palabras:
-                    digitos = "".join(c for c in palabra if c.isdigit())
-                    if not digitos:
-                        continue
-                    clientes = _coincide_cliente(digitos, mapa_cedulas)
-                    if not clientes:
-                        continue
-                    clave_cedula_hallada = _normalizar_cedula(digitos)
-                    if clave_cedula_hallada not in mapa_cedulas and len(digitos) > 1:
-                        clave_cedula_hallada = _normalizar_cedula(digitos[1:])
-                   
-                    clave_cedula = mapa_id_a_cedula_real.get(clave_cedula_hallada, clave_cedula_hallada)
-                    hallado_por_numero_asegurado = clave_cedula != clave_cedula_hallada
-
-                    fila_y0 = min(w[1] for w in palabras if abs(w[1] - y0) <= _TOLERANCIA_FILA)
-                    fila_y1 = max(w[3] for w in palabras if abs(w[1] - y0) <= _TOLERANCIA_FILA)
-
-                    limite_superior, limite_inferior = _limites_fila_por_anclas_vecinas(y0, y0s_cedulas_pagina)
-                    if limite_superior is not None:
-                        fila_y0 = max(fila_y0, limite_superior)
-                    if limite_inferior is not None:
-                        fila_y1 = min(fila_y1, limite_inferior)
-                    else:
-                        
-                        fila_y1 = min(fila_y1, fila_y0 + _ALTURA_MAXIMA_FILA_SIN_VECINA)
-
-                    franja = fitz.Rect(pagina.rect.x0, fila_y0 - 2, pagina.rect.x1, fila_y1 + 2)
-
+                for franja, clientes, clave_cedula, hallado_por_numero_asegurado in _localizar_coincidencias_de_cedula(
+                    pagina, palabras, y0s_cedulas_pagina, mapa_cedulas, mapa_id_a_cedula_real,
+                ):
                     for cliente in clientes:
                         polizas_encontradas.setdefault((clave_cedula, cliente), set()).add(nombre_archivo)
                         if hallado_por_numero_asegurado:
@@ -781,28 +833,9 @@ def resaltar_por_cedula_y_exportar_por_cliente(
         _flush_a_disco(estado)
         archivos_por_cliente[cliente] = str(estado["ruta_salida"])
 
-    detalle_registros = []
-    for clave, datos in registros_unicos.items():
-        cliente = clave[1]
-        polizas = sorted(polizas_encontradas.get(clave, set()))
-        encontrado = bool(polizas)
-        detalle_registros.append({
-            "cedula": datos["cedula"],
-            "nombre": datos["nombre"],
-            "cliente": cliente,
-            "numero_asegurado": datos.get("numero_asegurado", ""),
-            "polizas": polizas,
-            "encontrado": encontrado,
-            
-            "encontrado_por": (
-                "numero_asegurado" if clave in encontrados_por_numero_asegurado else "cedula"
-            ) if encontrado else None,
-        })
-
-    no_encontrados = [
-        {"cedula": d["cedula"], "cliente": d["cliente"], "nombre": d["nombre"]}
-        for d in detalle_registros if not d["encontrado"]
-    ]
+    detalle_registros, no_encontrados = _construir_detalle_registros(
+        registros_unicos, polizas_encontradas, encontrados_por_numero_asegurado,
+    )
 
     return {
         "archivos_por_cliente": archivos_por_cliente,
@@ -817,36 +850,7 @@ def resaltar_por_cedula_sin_recortar(
     registros: list[dict],
     carpeta_salida: str,
 ) -> dict:
-    
-    registros_unicos: dict[tuple[str, str], dict] = {}
-    for r in registros:
-        cedula, cliente = r.get("cedula"), r.get("cliente")
-        if not cedula or not cliente:
-            continue
-        clave = (_normalizar_cedula(cedula), cliente)
-        if clave not in registros_unicos:
-            registros_unicos[clave] = {
-                "cedula": cedula,
-                "cliente": cliente,
-                "nombre": r.get("nombre", ""),
-                "numero_asegurado": r.get("numero_asegurado", ""),
-            }
-
-    mapa_cedulas: dict[str, list[str]] = {}
-    mapa_id_a_cedula_real: dict[str, str] = {}
-    for clave_cedula, cliente in registros_unicos:
-        clientes = mapa_cedulas.setdefault(clave_cedula, [])
-        if cliente not in clientes:
-            clientes.append(cliente)
-        mapa_id_a_cedula_real.setdefault(clave_cedula, clave_cedula)
-
-        numero_asegurado_raw = registros_unicos[(clave_cedula, cliente)].get("numero_asegurado")
-        if numero_asegurado_raw:
-            numero_asegurado = _normalizar_cedula(numero_asegurado_raw)
-            clientes_asegurado = mapa_cedulas.setdefault(numero_asegurado, [])
-            if cliente not in clientes_asegurado:
-                clientes_asegurado.append(cliente)
-            mapa_id_a_cedula_real.setdefault(numero_asegurado, clave_cedula)
+    registros_unicos, mapa_cedulas, mapa_id_a_cedula_real = _construir_mapas_cedula(registros)
 
     polizas_encontradas: dict[tuple[str, str], set] = {}
     encontrados_por_numero_asegurado: set = set()
@@ -878,32 +882,9 @@ def resaltar_por_cedula_sin_recortar(
                 y0s_cedulas_pagina = _y0s_anclas_fila(pagina, textpage=textpage)
 
                 franjas_ya_resaltadas: list = []
-                for x0, y0, x1, y1, palabra, *_resto in palabras:
-                    digitos = "".join(c for c in palabra if c.isdigit())
-                    if not digitos:
-                        continue
-                    clientes = _coincide_cliente(digitos, mapa_cedulas)
-                    if not clientes:
-                        continue
-                    clave_cedula_hallada = _normalizar_cedula(digitos)
-                    if clave_cedula_hallada not in mapa_cedulas and len(digitos) > 1:
-                        clave_cedula_hallada = _normalizar_cedula(digitos[1:])
-                    clave_cedula = mapa_id_a_cedula_real.get(clave_cedula_hallada, clave_cedula_hallada)
-                    hallado_por_numero_asegurado = clave_cedula != clave_cedula_hallada
-
-                    fila_y0 = min(w[1] for w in palabras if abs(w[1] - y0) <= _TOLERANCIA_FILA)
-                    fila_y1 = max(w[3] for w in palabras if abs(w[1] - y0) <= _TOLERANCIA_FILA)
-
-                    limite_superior, limite_inferior = _limites_fila_por_anclas_vecinas(y0, y0s_cedulas_pagina)
-                    if limite_superior is not None:
-                        fila_y0 = max(fila_y0, limite_superior)
-                    if limite_inferior is not None:
-                        fila_y1 = min(fila_y1, limite_inferior)
-                    else:
-                        fila_y1 = min(fila_y1, fila_y0 + _ALTURA_MAXIMA_FILA_SIN_VECINA)
-
-                    franja = fitz.Rect(pagina.rect.x0, fila_y0 - 2, pagina.rect.x1, fila_y1 + 2)
-
+                for franja, clientes, clave_cedula, hallado_por_numero_asegurado in _localizar_coincidencias_de_cedula(
+                    pagina, palabras, y0s_cedulas_pagina, mapa_cedulas, mapa_id_a_cedula_real,
+                ):
                     for cliente in clientes:
                         polizas_encontradas.setdefault((clave_cedula, cliente), set()).add(nombre_archivo)
                         if hallado_por_numero_asegurado:
@@ -926,27 +907,9 @@ def resaltar_por_cedula_sin_recortar(
         finally:
             documento.close()
 
-    detalle_registros = []
-    for clave, datos in registros_unicos.items():
-        cliente = clave[1]
-        polizas = sorted(polizas_encontradas.get(clave, set()))
-        encontrado = bool(polizas)
-        detalle_registros.append({
-            "cedula": datos["cedula"],
-            "nombre": datos["nombre"],
-            "cliente": cliente,
-            "numero_asegurado": datos.get("numero_asegurado", ""),
-            "polizas": polizas,
-            "encontrado": encontrado,
-            "encontrado_por": (
-                "numero_asegurado" if clave in encontrados_por_numero_asegurado else "cedula"
-            ) if encontrado else None,
-        })
-
-    no_encontrados = [
-        {"cedula": d["cedula"], "cliente": d["cliente"], "nombre": d["nombre"]}
-        for d in detalle_registros if not d["encontrado"]
-    ]
+    detalle_registros, no_encontrados = _construir_detalle_registros(
+        registros_unicos, polizas_encontradas, encontrados_por_numero_asegurado,
+    )
 
     return {
         "archivos_resaltados": archivos_resaltados,
