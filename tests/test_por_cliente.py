@@ -231,7 +231,7 @@ def test_encabezado_sale_de_la_pagina_1_aunque_el_cliente_empiece_en_la_pagina_2
     pagina1.insert_text((36, 40), "REPORTE MNK - LETTERHEAD COMPLETO", fontsize=13)
     pagina1.insert_text((36, 60), "Fecha: 01/01/2026", fontsize=10)
     _escribir_fila(pagina1, 100, _TITULOS_COLUMNAS)
-    _escribir_fila(pagina1, 140, [("999999999", "OTRO", "CLIENTE VIEJO", "Ninguna")])
+    _escribir_fila(pagina1, 140, [("999999999", 90), ("OTRO", 80), ("CLIENTE VIEJO", 100), ("Ninguna", 90)])
 
     # página 2: sin letterhead, solo repite la fila de títulos más arriba
     pagina2 = documento.new_page(width=595, height=842)

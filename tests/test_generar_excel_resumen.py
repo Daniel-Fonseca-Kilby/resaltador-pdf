@@ -57,11 +57,11 @@ def test_detalle_de_oficiales_marca_encontrado_y_no_encontrado():
     filas = list(hoja.iter_rows(values_only=True))[1:]  # sin encabezado
     por_cedula = {fila[0]: fila for fila in filas}
 
-    assert "Sí" in por_cedula["111111111"][4]
-    assert por_cedula["111111111"][3] == "poliza_a.pdf"
+    assert "Sí" in por_cedula["111111111"][5]
+    assert por_cedula["111111111"][4] == "poliza_a.pdf"
 
-    assert "No encontrado" in por_cedula["999999999"][4]
-    assert por_cedula["999999999"][3] == "(Ninguno)"
+    assert "No encontrado" in por_cedula["999999999"][5]
+    assert por_cedula["999999999"][4] == "(Ninguno)"
 
 
 def test_generar_excel_resumen_con_lista_vacia_no_falla():

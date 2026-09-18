@@ -14,11 +14,16 @@ from pathlib import Path
 import openpyxl
 import pytest
 
-from api.index import _limpiar_temporales_antiguos, app
+from api.index import _historial_solicitudes_por_ip, _limpiar_temporales_antiguos, app
 
 
 @pytest.fixture
 def cliente_flask():
+    # cada prueba arranca con el historial del límite de solicitudes
+    # limpio -si no, el orden en que pytest corre los tests (todas comparten
+    # la misma IP de test_client) contaminaría el conteo entre una y otra
+    # (ver test_api_limite.py, que hace lo mismo para sus propias pruebas).
+    _historial_solicitudes_por_ip.clear()
     return app.test_client()
 
 
@@ -184,7 +189,9 @@ def test_procesar_multiples_pdfs_mismo_nombre(cliente_flask, ruta_pdf_ejemplo):
     assert respuesta.headers["X-Total-Archivos"] == "2"
 
     with zipfile.ZipFile(io.BytesIO(respuesta.data)) as zf:
-        nombres_pdf = [n for n in zf.namelist() if n.lower().endswith(".pdf")]
+        nombres_pdf = [
+            n for n in zf.namelist() if n.lower().endswith(".pdf") and not n.startswith("Resumen_")
+        ]
 
     assert len(nombres_pdf) == 2
     assert len(set(nombres_pdf)) == 2  # nombres distintos, ninguno se pisó
