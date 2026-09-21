@@ -1,4 +1,3 @@
-"""Pruebas de generar_pdf_resumen (el PDF que va dentro del zip del modo cliente)."""
 import pymupdf as fitz
 
 from resaltado_pdf import generar_pdf_resumen

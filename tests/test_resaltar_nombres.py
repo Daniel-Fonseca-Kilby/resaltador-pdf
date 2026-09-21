@@ -1,5 +1,3 @@
-"""Pruebas de resaltar_nombres_en_pdf con el PDF de ejemplo (datos
-inventados, ver conftest.py)."""
 from resaltado_pdf import resaltar_nombres_en_pdf
 
 

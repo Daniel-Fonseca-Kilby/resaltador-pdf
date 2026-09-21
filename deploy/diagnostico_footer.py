@@ -42,8 +42,6 @@ def main():
         else:
             print(f"  '{ANCLA_LEYENDA}' NO aparece")
 
-    # busca la fila de Jehudy (cedula 701810913) y lista todas las
-    # palabras cercanas en Y, para ver que se esta colando
     print("\n=== Buscando fila con cedula 701810913 (Jehudy) ===")
     for indice, pagina in enumerate(documento):
         rects = pagina.search_for("701810913")

@@ -31,9 +31,6 @@ def main():
         else:
             print("  (sin anclas de fila -> pagina sin empleados, seria 'pagina de cierre siguiente')")
 
-        # texto crudo de la pagina, para verlo aunque search_for no encuentre
-        # las frases exactas -a veces si aparece por get_text() aunque no por
-        # search_for
         texto = pagina.get_text().strip()
         primeras_lineas = "\n    ".join(texto.splitlines()[:15])
         print(f"  primeras lineas de texto crudo:\n    {primeras_lineas}")

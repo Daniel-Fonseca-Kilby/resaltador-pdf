@@ -428,10 +428,6 @@ def _construir_mapas_cedula(registros: list[dict]) -> tuple[dict, dict, dict]:
 
 
 def _localizar_coincidencias_de_cedula(pagina, palabras: list, y0s_cedulas_pagina: list[float], mapa_cedulas: dict, mapa_id_a_cedula_real: dict):
-    """Recorre las palabras de una página y por cada una que calce con una
-    cédula/número de asegurado conocido, arma la franja de su fila. Comparten
-    esta lógica resaltar_por_cedula_y_exportar_por_cliente() y
-    resaltar_por_cedula_sin_recortar()."""
     for x0, y0, x1, y1, palabra, *_resto in palabras:
         digitos = "".join(c for c in palabra if c.isdigit())
         if not digitos:
@@ -465,10 +461,7 @@ def _localizar_coincidencias_de_cedula(pagina, palabras: list, y0s_cedulas_pagin
 def _construir_detalle_registros(
     registros_unicos: dict, polizas_encontradas: dict, encontrados_por_numero_asegurado: set,
 ) -> tuple[list[dict], list[dict]]:
-    """Arma el detalle final por registro (para el Excel de Facturación) y
-    la lista de cédulas que no aparecieron en ningún PDF. Comparten esta
-    lógica resaltar_por_cedula_y_exportar_por_cliente() y
-    resaltar_por_cedula_sin_recortar()."""
+    
     detalle_registros = []
     for clave, datos in registros_unicos.items():
         cliente = clave[1]
@@ -920,8 +913,7 @@ def resaltar_por_cedula_sin_recortar(
 
 
 def generar_pdf_resumen(titulo: str, secciones: list[tuple[str, list[str]]]) -> bytes:
-    """PDF simple de texto con listas por sección (cédulas no encontradas,
-    archivos con error, etc.), para meter dentro del zip."""
+    
     documento = fitz.open()
     pagina = documento.new_page()
     margen = 40

@@ -109,8 +109,6 @@ def index():
 
 @app.errorhandler(Exception)
 def _manejar_error(error):
-    """Cualquier error sale como JSON en español -si no, Flask devuelve
-    HTML y el front no lo puede leer."""
     if isinstance(error, HTTPException) and error.code == 413:
         return jsonify(error="El archivo es demasiado grande (máximo 60 MB en total)."), 413
     if isinstance(error, HTTPException):
@@ -120,7 +118,6 @@ def _manejar_error(error):
 
 
 def _abrir_libro(archivo):
-    """Si el Excel está dañado o no es realmente un .xlsx, tira un mensaje claro."""
     try:
         return openpyxl.load_workbook(archivo, read_only=True, data_only=True)
     except Exception:
@@ -131,8 +128,7 @@ def _abrir_libro(archivo):
 
 
 def _decodificar_csv(contenido_bytes: bytes) -> str:
-    """Prueba UTF-8 con BOM, UTF-8 normal y Latin-1 (Windows-1252), que es
-    lo que suelen exportar Softland/SAP/Exactus en Costa Rica."""
+
     for codificacion in ("utf-8-sig", "utf-8", "latin-1"):
         try:
             return contenido_bytes.decode(codificacion)
@@ -142,8 +138,7 @@ def _decodificar_csv(contenido_bytes: bytes) -> str:
 
 
 def _detectar_delimitador(texto: str) -> str:
-    """Excel en español exporta CSV con punto y coma, porque la coma
-    queda reservada para los decimales."""
+
     primera_linea = texto.splitlines()[0] if texto else ""
     if primera_linea.count(";") > primera_linea.count(","):
         return ";"
@@ -176,8 +171,7 @@ def _filas_desde_archivo(archivo):
 
 
 def _nombres_desde_excel(archivo) -> list[str]:
-    """Primera columna no vacía de cada fila. Ignora la primera fila si
-    parece encabezado (ej. 'Nombre')."""
+
     nombres = []
     for i, fila in enumerate(_filas_desde_archivo(archivo)):
         valor = next((c for c in fila if c not in (None, "")), None)
@@ -192,9 +186,7 @@ def _nombres_desde_excel(archivo) -> list[str]:
 
 
 def _combinar_nombres(texto_nombres: str, archivo_excel) -> list[str]:
-    """Junta los nombres escritos a mano con los del Excel, sin
-    duplicados (comparando en mayúsculas, pero conservando el primer
-    formato con el que apareció cada uno)."""
+
     candidatos = [n.strip() for n in texto_nombres.split(",") if n.strip()]
     if archivo_excel and archivo_excel.filename:
         candidatos.extend(_nombres_desde_excel(archivo_excel))
@@ -209,12 +201,10 @@ def _combinar_nombres(texto_nombres: str, archivo_excel) -> list[str]:
     return nombres
 
 
-# sinónimos normalizados (sin tildes, mayúsculas), en orden de prioridad:
 
 _SINONIMOS_CEDULA = ["IDENTIFICACION", "CEDULA", "ID", "DOCUMENTO", "IDENTIFICACION FISCAL", "NUMERO"]
 _SINONIMOS_CLIENTE = ["CLIENTE", "CUENTA"]
 _SINONIMOS_NOMBRE = ["NOMBRE", "NOMBRES", "EMPLEADO", "COLABORADOR", "NOMBRE COMPLETO"]
-# columna opcional: en la CCSS, un extranjero con DIMEX sale impreso con su número de asegurado, y en el Excel de la planilla también viene esa columna
 _SINONIMOS_NUMERO_ASEGURADO = [
     "NUMERO DE ASEGURADO", "NUMERO ASEGURADO", "ASEGURADO", "NUM ASEGURADO", "N ASEGURADO",
 ]
@@ -491,7 +481,6 @@ def _procesar_modo_cliente(
                 )
                 zf.writestr("Resumen.pdf", resumen_pdf)
 
-            # para que Facturación no tenga que abrir cada PDF a contar oficiales
             resumen_excel = generar_excel_resumen(resultado["detalle_registros"])
             zf.writestr("Resumen_Facturacion.xlsx", resumen_excel)
     finally:

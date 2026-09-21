@@ -30,8 +30,7 @@ def main():
         franja_leyenda = _franja_leyenda_en_pagina(pagina, "mnk")
         print(f"_franja_leyenda_en_pagina = {franja_leyenda}")
 
-        # cuantas veces aparece cada ancla de encabezado (por si se repite
-        # varias veces dentro de la misma pagina gigante)
+
         for nombre_perfil, anclas in _PERFILES_ENCABEZADO.items():
             for ancla in anclas:
                 n = len(pagina.search_for(ancla))

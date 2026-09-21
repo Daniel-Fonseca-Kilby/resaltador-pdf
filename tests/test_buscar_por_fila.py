@@ -11,7 +11,7 @@ def test_agrupa_palabras_de_la_misma_fila(ruta_pdf_ejemplo):
     filas = _buscar_por_fila(pagina, ["JUAN", "PEREZ"])
 
     assert len(filas) == 1
-    assert len(filas[0]) == 2  # un rect por cada palabra encontrada
+    assert len(filas[0]) == 2  
     documento.close()
 
 

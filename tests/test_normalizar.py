@@ -1,4 +1,3 @@
-"""Pruebas de las utilidades de normalización de texto (no usan PDFs)."""
 from api.index import _extraer_cedula_limpia, _indice_por_sinonimos
 from resaltado_pdf import (
     _coincide_cliente,
@@ -36,8 +35,7 @@ def test_coincide_cliente_exacto():
 
 
 def test_coincide_cliente_con_digito_de_tipo_identificacion_antepuesto():
-    # Algunas planillas (ej. CCSS) anteponen un dígito de tipo de
-    # identificación al número real de cédula (ej. "0-303370238").
+
     mapa = {"303370238": ["Cliente Uno"]}
     assert _coincide_cliente("0303370238", mapa) == ["Cliente Uno"]
 
@@ -48,7 +46,6 @@ def test_coincide_cliente_no_encontrado():
 
 
 def test_coincide_cliente_devuelve_varios_clientes_para_la_misma_cedula():
-    # Un oficial puede cubrir turnos en más de un cliente (relación 1 a N).
     mapa = {"111111111": ["Cliente Walmart", "Cliente BAC"]}
     assert _coincide_cliente("111111111", mapa) == ["Cliente Walmart", "Cliente BAC"]
 
@@ -62,15 +59,11 @@ def test_normalizar_cedula_sin_ceros_no_cambia():
 
 
 def test_coincide_cliente_tolera_cedula_sin_ceros_a_la_izquierda():
-    # El Excel puede traer la cédula sin el cero inicial si la columna
-    # quedó como celda numérica en vez de texto (ej. 8 dígitos en vez de 9).
     mapa = {"10234056": ["Cliente Uno"]}
     assert _coincide_cliente("010234056", mapa) == ["Cliente Uno"]
 
 
 def test_extraer_cedula_limpia_elimina_decimal_cero():
-    # BUSCARV/ERP suele devolver la cédula como float (303370238.0) cuando
-    # la columna del Excel quedó como celda numérica en vez de texto.
     assert _extraer_cedula_limpia(303370238.0) == "303370238"
     assert _extraer_cedula_limpia("303370238.0") == "303370238"
 
@@ -99,7 +92,6 @@ def test_todas_las_palabras_en_texto_lista_vacia():
 
 
 def test_todas_las_palabras_en_texto_tolera_ene_como_espacio():
-    # el bug de MNK: "MUÑOZ" puede salir como "MU OZ" en el texto del PDF
     texto = _normalizar("SOLANO MU OZ")
     assert _todas_las_palabras_en_texto(texto, ["MUÑOZ"]) is True
 
@@ -110,8 +102,6 @@ def test_puede_aparecer_en_pagina_por_frase_completa():
 
 
 def test_puede_aparecer_en_pagina_por_palabras_sueltas():
-    # nombre y apellido en columnas separadas -la frase completa no está
-    # junta, pero las palabras sí están todas en la página
     texto = _normalizar("JUAN   PEREZ MORA")
     assert _puede_aparecer_en_pagina(texto, "Juan Perez Mora", ["JUAN", "PEREZ", "MORA"]) is True
 
@@ -122,9 +112,6 @@ def test_puede_aparecer_en_pagina_ausente():
 
 
 def test_indice_por_sinonimos_prefiere_termino_mas_especifico():
-    # Las planillas reales de VMA traen "Empresa" (unidad interna) Y
-    # "Cliente" (a quién se factura) en el mismo Excel -"Empresa" está
-    # antes en las columnas, pero no debe ganar solo por eso.
     encabezado = ["Empresa", "Identificacion", "Cliente"]
     assert _indice_por_sinonimos(encabezado, ["CLIENTE", "EMPRESA"]) == 2
 
@@ -147,28 +134,26 @@ def test_nombre_archivo_seguro_vacio_usa_valor_por_defecto():
 
 
 def test_limites_fila_por_anclas_vecinas_con_anterior_y_siguiente():
-    # cédulas vecinas a Y=100 (anterior) y Y=140 (siguiente) de la fila en Y=120
     superior, inferior = _limites_fila_por_anclas_vecinas(120, [100, 120, 140])
-    assert superior == 110  # punto medio entre 100 y 120
-    assert inferior == 130  # punto medio entre 120 y 140
+    assert superior == 110  
+    assert inferior == 130  
 
 
 def test_limites_fila_por_anclas_vecinas_solo_anterior():
-    # es la última fila de la página -no hay ancla siguiente que la limite
+  
     superior, inferior = _limites_fila_por_anclas_vecinas(140, [100, 120, 140])
     assert superior == 130
     assert inferior is None
 
 
 def test_limites_fila_por_anclas_vecinas_solo_siguiente():
-    # es la primera fila de la página -no hay ancla anterior
+
     superior, inferior = _limites_fila_por_anclas_vecinas(100, [100, 120, 140])
     assert superior is None
     assert inferior == 110
 
 
 def test_limites_fila_por_anclas_vecinas_sin_vecinas():
-    # única cédula de la página -no hay nada que la limite por ningún lado
     superior, inferior = _limites_fila_por_anclas_vecinas(120, [120])
     assert superior is None
     assert inferior is None

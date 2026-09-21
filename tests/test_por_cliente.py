@@ -1,4 +1,3 @@
-"""Pruebas de resaltar_por_cedula_y_exportar_por_cliente (datos inventados, ver conftest.py)."""
 from pathlib import Path
 
 import pymupdf as fitz
@@ -17,8 +16,6 @@ from resaltado_pdf import (
 
 
 def _escribir_fila(pagina, y, celdas, fontsize=10):
-    """Escribe una fila de texto en columnas separadas horizontalmente,
-    imitando cómo una planilla real reparte el texto en columnas anchas."""
     x = 36
     for texto, ancho in celdas:
         pagina.insert_text((x, y), texto, fontsize=fontsize)
@@ -31,10 +28,7 @@ _TITULOS_COLUMNAS = [
 
 
 def _crear_pdf_planilla(ruta, empresa, filas_por_pagina, espacio_filas=30):
-    """Arma una planilla con una página por cada lista de filas de
-    'filas_por_pagina', repitiendo encabezado (empresa + títulos de
-    columna) en cada página -como pasa en una planilla real de varias
-    hojas para la misma póliza."""
+
     documento = fitz.open()
     for filas in filas_por_pagina:
         pagina = documento.new_page(width=595, height=842)
@@ -100,12 +94,7 @@ def test_no_reporta_errores_con_un_pdf_valido(ruta_pdf_ejemplo, registros_ejempl
 
 
 def test_extranjero_se_encuentra_por_numero_de_asegurado_si_el_dimex_no_aparece(tmp_path):
-    """La CCSS imprime a un extranjero bajo su número de asegurado de la
-    Caja, no bajo el DIMEX que trae el Excel. Si el registro trae
-    'numero_asegurado' y ese número sí aparece en el PDF (aunque el DIMEX
-    no aparezca en ningún lado), debe encontrarse en la misma pasada -sin
-    necesitar el rescate por nombre- y quedar reportado bajo su cédula
-    real (el DIMEX), no bajo el número de asegurado."""
+
     ruta_poliza = tmp_path / "poliza_ccss.pdf"
     _crear_pdf_planilla(
         ruta_poliza,
@@ -140,9 +129,7 @@ def test_extranjero_se_encuentra_por_numero_de_asegurado_si_el_dimex_no_aparece(
 
 
 def test_numero_de_asegurado_vacio_no_afecta_la_busqueda_normal_por_cedula(ruta_pdf_ejemplo, registros_ejemplo, tmp_path):
-    """Si el registro no trae número de asegurado (columna vacía o
-    ausente, el caso normal para un nacional), todo debe seguir
-    funcionando exactamente igual que antes -por cédula."""
+    
     carpeta_salida = tmp_path / "salida_por_cliente"
 
     resultado = resaltar_por_cedula_y_exportar_por_cliente(
@@ -171,7 +158,6 @@ def test_pdf_con_contrasena_se_reporta_como_error_sin_tumbar_el_proceso(tmp_path
 
 
 def test_techo_de_datos_queda_entre_el_encabezado_y_la_primera_fila(ruta_pdf_ejemplo):
-    # Deben coincidir con Y_TITULOS y Y_PRIMERA_FILA en conftest.py.
     y_titulos = 100
     y_primera_fila = 140
 
@@ -186,9 +172,7 @@ def test_techo_de_datos_queda_entre_el_encabezado_y_la_primera_fila(ruta_pdf_eje
 
 
 def test_encabezado_una_sola_vez_si_la_poliza_cabe_en_una_hoja(tmp_path):
-    """Un mismo oficial partido en 3 páginas del mismo PDF (misma póliza)
-    solo debe arrastrar el encabezado una vez, si las filas caben en una
-    sola hoja de salida."""
+    
     ruta_poliza = tmp_path / "poliza_a.pdf"
     _crear_pdf_planilla(
         ruta_poliza,
@@ -218,22 +202,15 @@ def test_encabezado_una_sola_vez_si_la_poliza_cabe_en_una_hoja(tmp_path):
 
 
 def test_encabezado_sale_de_la_pagina_1_aunque_el_cliente_empiece_en_la_pagina_2(tmp_path):
-    """Reproduce un reporte real de varias páginas (ej. MNK): la página 1
-    trae el logo/título/fecha completos, las páginas siguientes solo
-    repiten la fila de títulos de columna, más arriba. Si el primer oficial
-    de un cliente aparece recién en la página 2, igual se debe llevar el
-    encabezado COMPLETO de la página 1 -no el recortado de su propia
-    página, que le faltaría el logo/título/fecha."""
+  
     documento = fitz.open()
 
-    # página 1: encabezado completo (letterhead) + una fila de otro cliente
     pagina1 = documento.new_page(width=595, height=842)
     pagina1.insert_text((36, 40), "REPORTE MNK - LETTERHEAD COMPLETO", fontsize=13)
     pagina1.insert_text((36, 60), "Fecha: 01/01/2026", fontsize=10)
     _escribir_fila(pagina1, 100, _TITULOS_COLUMNAS)
     _escribir_fila(pagina1, 140, [("999999999", 90), ("OTRO", 80), ("CLIENTE VIEJO", 100), ("Ninguna", 90)])
 
-    # página 2: sin letterhead, solo repite la fila de títulos más arriba
     pagina2 = documento.new_page(width=595, height=842)
     _escribir_fila(pagina2, 40, _TITULOS_COLUMNAS)
     _escribir_fila(pagina2, 80, [("111111111", "JUAN", "PEREZ NUEVO", "Ninguna")])
@@ -259,13 +236,7 @@ def test_encabezado_sale_de_la_pagina_1_aunque_el_cliente_empiece_en_la_pagina_2
 
 
 def test_pie_de_pagina_con_total_se_agrega_al_final_del_documento(tmp_path):
-    """El pie de página con el total (tal cual viene en el original, ver
-    _PERFILES_PIE_PAGINA) se agrega al final del PDF de cada cliente -como
-    imagen, no como copia vectorial: así se lleva también el valor de
-    campos de formulario (ej. el total real de CCSS, que la Oficina
-    Virtual rellena como widget en vez de como texto de la página), que
-    show_pdf_page no arrastra. Por eso se verifica que se insertó una
-    imagen, no que el texto se pueda extraer."""
+
     ruta_poliza = tmp_path / "poliza_con_total.pdf"
     documento = fitz.open()
     pagina = documento.new_page(width=595, height=842)
@@ -292,9 +263,7 @@ def test_pie_de_pagina_con_total_se_agrega_al_final_del_documento(tmp_path):
 
 
 def test_pie_de_pagina_separa_total_de_leyenda_sin_el_hueco_del_medio(tmp_path):
-    """Si el original trae un hueco en blanco grande entre el total y la
-    leyenda/firma (como en CCSS real), se recortan como DOS franjas
-    separadas -no se arrastra ese hueco como un solo bloque enorme."""
+   
     ruta_poliza = tmp_path / "poliza_con_hueco.pdf"
     documento = fitz.open()
     pagina = documento.new_page(width=595, height=842)
@@ -323,9 +292,7 @@ def test_pie_de_pagina_separa_total_de_leyenda_sin_el_hueco_del_medio(tmp_path):
 
 
 def test_pie_de_pagina_de_cada_poliza_queda_junto_a_sus_propias_filas(tmp_path):
-    """Si el cliente tiene oficiales en dos pólizas distintas, el total de
-    la póliza 1 tiene que quedar junto a SUS propias filas -no amontonado
-    con el de la póliza 2 al final de todo el documento."""
+
     ruta_poliza_a = tmp_path / "poliza_a.pdf"
     ruta_poliza_b = tmp_path / "poliza_b.pdf"
 
@@ -355,8 +322,7 @@ def test_pie_de_pagina_de_cada_poliza_queda_junto_a_sus_propias_filas(tmp_path):
 
     documento_salida = fitz.open(resultado["archivos_por_cliente"]["Cliente Dos Polizas"])
     try:
-        # cada póliza (encabezado + fila + su propio total) cabe en su
-        # propia hoja -no queda un total separado al final de todo
+        
         assert documento_salida.page_count == 2
 
         texto_pagina_1 = documento_salida[0].get_text()
@@ -373,13 +339,7 @@ def test_pie_de_pagina_de_cada_poliza_queda_junto_a_sus_propias_filas(tmp_path):
 
 
 def test_varias_polizas_seguidas_conservan_todo_el_contenido_tras_guardarse_a_disco(tmp_path):
-    """Por memoria, el PDF de cada cliente se guarda a disco y se libera de
-    RAM en cada cambio de póliza (ver _flush_a_disco), en vez de mantenerse
-    completo en memoria hasta el final -esto obliga a reabrir el archivo y
-    seguir agregándole páginas con guardados incrementales. Con tres
-    pólizas seguidas para el mismo cliente se ejercita ese guardado
-    incremental más de una vez seguida, para asegurar que ninguna página
-    anterior se pierda ni se corrompa por el camino."""
+   
     rutas = []
     for letra in ("A", "B", "C"):
         ruta = tmp_path / f"poliza_{letra.lower()}.pdf"
@@ -414,10 +374,7 @@ def test_varias_polizas_seguidas_conservan_todo_el_contenido_tras_guardarse_a_di
 
 
 def test_pie_de_pagina_se_comparte_entre_clientes_de_la_misma_poliza(tmp_path):
-    """El render del pie de página se cachea por archivo (para no
-    reabrirlo/re-renderizarlo por cada cliente que comparte la misma
-    póliza) -pero cada cliente igual debe llevarse su propia copia en su
-    PDF, sin que el cacheo se lo pierda ni se lo mezcle con otro."""
+    
     ruta_poliza = tmp_path / "poliza_compartida.pdf"
     documento = fitz.open()
     pagina = documento.new_page(width=595, height=842)
@@ -448,8 +405,7 @@ def test_pie_de_pagina_se_comparte_entre_clientes_de_la_misma_poliza(tmp_path):
 
 
 def test_pie_de_pagina_no_se_agrega_si_el_formato_no_tiene_perfil_conocido(tmp_path):
-    """Si el formato no tiene un perfil de pie de página conocido (ej.
-    INS), no se agrega nada -mejor omitirlo que recortar cualquier cosa."""
+    
     ruta_poliza = tmp_path / "poliza_sin_perfil.pdf"
     documento = fitz.open()
     pagina = documento.new_page(width=595, height=842)
@@ -473,13 +429,7 @@ def test_pie_de_pagina_no_se_agrega_si_el_formato_no_tiene_perfil_conocido(tmp_p
 
 
 def test_pie_de_pagina_usa_la_ultima_fila_si_el_texto_del_total_no_se_encuentra(tmp_path):
-    """Algunos PDFs reales de MNK no traen el rótulo del total (ni
-    "CODIFICACIÓN") como texto buscable con search_for, aunque se vean
-    perfectamente al abrir el archivo. En ese caso se usa la posición de
-    la ÚLTIMA fila de empleado real (por su número de identificación)
-    como referencia: todo lo que hay debajo de ella, hasta el final de
-    la hoja, se copia como cierre de la póliza, sea o no texto buscable
-    con las anclas conocidas."""
+   
     ruta_poliza = tmp_path / "poliza_sin_texto_de_total.pdf"
     documento = fitz.open()
     pagina = documento.new_page(width=595, height=842)
@@ -506,22 +456,13 @@ def test_pie_de_pagina_usa_la_ultima_fila_si_el_texto_del_total_no_se_encuentra(
 
 
 def test_respaldo_posicional_no_arrastra_el_espacio_en_blanco_hasta_el_fondo_de_la_hoja(tmp_path):
-    """Igual que la prueba anterior (texto de total no buscable), pero en
-    una hoja donde el contenido real termina bien antes del final de la
-    página -como pasa en pólizas grandes reales donde el total/codificación
-    quedan a media hoja y el resto queda en blanco. El respaldo posicional
-    no debe arrastrar ese espacio vacío hasta el borde físico de la hoja:
-    debe cortar justo después del último texto real, para que la
-    leyenda/firma de la hoja siguiente pueda quedar pegada en el mismo
-    bloque de salida en vez de dejar un salto de página feo en el medio."""
-    ruta_poliza = tmp_path / "poliza_con_hueco_grande.pdf"
+    
     documento = fitz.open()
     pagina = documento.new_page(width=595, height=842)
     pagina.insert_text((36, 40), "EMPRESA CON HUECO GRANDE", fontsize=13)
     _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
     _escribir_fila(pagina, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
-    # cierre que no calza con ninguna ancla conocida, y termina bien
-    # arriba -el resto de la hoja (hasta y=842) queda en blanco de verdad
+
     pagina.insert_text((36, 200), "RESUMEN FINAL DE LA PLANILLA - 1 REGISTRO", fontsize=10)
     documento.save(str(ruta_poliza))
     documento.close()
@@ -538,31 +479,22 @@ def test_respaldo_posicional_no_arrastra_el_espacio_en_blanco_hasta_el_fondo_de_
         for pagina_salida in documento_salida:
             for xref, *_resto in pagina_salida.get_images(full=True):
                 pixmap_img = fitz.Pixmap(documento_salida.extract_image(xref)["image"])
-                # la imagen se renderiza a 2x (fitz.Matrix(2, 2)), así que
-                # se divide entre 2 para volver a puntos de PDF
+
                 alto_maximo_imagen_pt = max(alto_maximo_imagen_pt, pixmap_img.height / 2)
 
-        # el texto real termina cerca de y=210; si se arrastrara hasta el
-        # fondo de la hoja (842) la imagen tendría más de 600pt de alto.
-        # Cortando pegado al contenido debe quedar muy por debajo de eso.
         assert alto_maximo_imagen_pt < 100
     finally:
         documento_salida.close()
 
 
 def test_franja_del_total_no_incluye_encabezado_repetido_pegado_arriba():
-    """Cuando a la última hoja de una póliza le quedan pocas filas, CCSS
-    repite el renglón de títulos de columna justo antes del total. La
-    franja recortada para el pie de página no debe incluir ese renglón
-    -si lo hiciera, saldría un pedazo de encabezado repetido y
-    desordenado justo arriba del total."""
+
     documento = fitz.open()
     pagina = documento.new_page(width=595, height=842)
     pagina.insert_text((36, 40), "EMPRESA PRUEBA", fontsize=13)
     _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
     _escribir_fila(pagina, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
-    # renglón de títulos repetido, muy pegado al total -el caso real que
-    # se ve cuando a la hoja le quedan pocas filas
+
     _escribir_fila(pagina, 150, _TITULOS_COLUMNAS)
     pagina.insert_text((36, 168), "TOTAL SALARIOS", fontsize=10)
 
@@ -574,12 +506,7 @@ def test_franja_del_total_no_incluye_encabezado_repetido_pegado_arriba():
 
 
 def test_pie_de_pagina_cuando_el_total_se_repite_en_hoja_de_aviso_legal(tmp_path):
-    """MNK reparte el pie de página real en dos hojas: la que trae los
-    datos + el total + "CODIFICACIÓN", y una hoja de aviso legal/firma
-    aparte donde el total se repite pero "CODIFICACIÓN" no aparece. El
-    total y la leyenda deben capturarse cada uno de la última hoja donde
-    de verdad aparecen -no asumir que están juntos, ni duplicar el total
-    solo porque sale en las dos hojas."""
+    
     ruta_poliza = tmp_path / "poliza_dos_hojas.pdf"
     documento = fitz.open()
 
@@ -608,19 +535,9 @@ def test_pie_de_pagina_cuando_el_total_se_repite_en_hoja_de_aviso_legal(tmp_path
     documento_salida = fitz.open(resultado["archivos_por_cliente"]["Cliente Dos Hojas"])
     try:
         imagenes = [xref for p in documento_salida for xref, *_r in p.get_images(full=True)]
-        # una imagen para el total (de la hoja de aviso, la última donde
-        # aparece) y una para la leyenda (de la hoja de datos, la única
-        # con "CODIFICACIÓN") -nunca deben salir tres o más
+        
         assert len(imagenes) == 2
 
-        # la de "CODIFICACIÓN" (con la firma) viene de la PRIMERA página del
-        # original (pagina_datos, índice 0); la del total repetido viene de
-        # la SEGUNDA (pagina_aviso, índice 1) -aunque el bloque del total se
-        # calcule primero en el código, en la salida debe listarse después
-        # de la leyenda, respetando el orden real de las páginas. Como la
-        # franja de la leyenda llega hasta el fondo de la hoja (mucho más
-        # alta que la del total, que es solo el renglón), se distinguen por
-        # su alto.
         alturas = [fitz.Pixmap(documento_salida.extract_image(xref)["image"]).height for xref in imagenes]
         assert alturas[0] > alturas[1], (
             "la leyenda (más alta, de la página 1) debe ir antes que el total repetido "
@@ -631,12 +548,7 @@ def test_pie_de_pagina_cuando_el_total_se_repite_en_hoja_de_aviso_legal(tmp_path
 
 
 def test_extender_leyenda_para_incluir_total_agrega_el_total_completo_arriba():
-    """En MNK "CODIFICACIÓN" a veces viene tan pegada al total que no hay
-    margen seguro para separarlos sin arriesgarse a cortar algo -en vez de
-    intentar una división perfecta, se prefiere que la leyenda vuelva a
-    incluir el total completo en su propio techo (el total ya se agregó
-    también como su propio bloque aparte): mejor que se vea duplicado a
-    que falte contenido. Así pedido explícitamente por VMA."""
+
     franja_total = fitz.Rect(0, 200, 595, 248)
     franja_leyenda = fitz.Rect(0, 215, 595, 800)
 
@@ -647,8 +559,7 @@ def test_extender_leyenda_para_incluir_total_agrega_el_total_completo_arriba():
 
 
 def test_extender_leyenda_para_incluir_total_no_toca_franja_que_ya_lo_incluye():
-    """Si la leyenda ya arrancaba antes que el total (o están en páginas
-    distintas), no hay nada que extender."""
+
     franja_total = fitz.Rect(0, 200, 595, 248)
     franja_leyenda_ya_incluye_el_total = fitz.Rect(0, 190, 595, 800)
 
@@ -657,7 +568,6 @@ def test_extender_leyenda_para_incluir_total_no_toca_franja_que_ya_lo_incluye():
     )
     assert extendida == franja_leyenda_ya_incluye_el_total
 
-    # en páginas distintas tampoco tiene sentido extender una contra la otra
     franja_leyenda_otra_pagina = fitz.Rect(0, 215, 595, 800)
     extendida_paginas_distintas = _extender_leyenda_para_incluir_total(
         franja_leyenda_otra_pagina, franja_total, misma_pagina=False
@@ -666,14 +576,7 @@ def test_extender_leyenda_para_incluir_total_no_toca_franja_que_ya_lo_incluye():
 
 
 def test_recortar_total_antes_de_leyenda_evita_tragarse_la_codificacion():
-    """Caso real de MNK: "CODIFICACIÓN" viene pegada casi sin espacio bajo
-    el total -el margen fijo de abajo del total (_MARGEN_ABAJO_TOTAL, 26pt)
-    se pasa de largo y termina capturando la barra de "CODIFICACIÓN" entera
-    dentro del recorte del total, dejándola faltante en el de la leyenda.
-    Debe recortarse el total para que pare justo donde arranca la leyenda."""
-    # el total "crudo" (con su margen fijo de 26pt) alcanza hasta y=239,
-    # pero la leyenda arranca en y=220 -mucho antes de que el margen del
-    # total termine
+
     franja_total_con_margen_generoso = fitz.Rect(0, 190, 842, 239)
     franja_leyenda = fitz.Rect(0, 220, 842, 595)
 
@@ -684,15 +587,7 @@ def test_recortar_total_antes_de_leyenda_evita_tragarse_la_codificacion():
 
 
 def test_recortar_total_antes_de_leyenda_nunca_corta_por_debajo_de_su_contenido_real(tmp_path):
-    """Caso real de MNK visto en producción: "CODIFICACIÓN" llegó TAN
-    pegada al total que recortar justo donde ella arranca dejaba al total
-    con menos alto del que necesita su propio renglón (sin el margen de
-    sobra) -cortando a media palabra el monto del "TOTAL DE SALARIO". Solo
-    el margen de sobra (_MARGEN_ABAJO_TOTAL) es sacrificable; el resto no,
-    aunque implique un poco de traslape con el inicio "crudo" de la
-    leyenda (que de todas formas la vuelve a incluir completa después)."""
-    # el renglón real del total (sin el margen) termina en y=222 -mucho
-    # después de donde arranca la leyenda (y=210)
+
     franja_total = fitz.Rect(0, 190, 842, 190 + _MARGEN_ABAJO_TOTAL + 32)  # y1 = 248
     franja_leyenda = fitz.Rect(0, 210, 842, 595)
 
@@ -704,16 +599,14 @@ def test_recortar_total_antes_de_leyenda_nunca_corta_por_debajo_de_su_contenido_
 
 
 def test_recortar_total_antes_de_leyenda_no_toca_franja_que_no_se_superpone():
-    """Si el margen del total ya paraba antes de donde arranca la leyenda,
-    no hay nada que recortar."""
+
     franja_total = fitz.Rect(0, 190, 842, 210)
     franja_leyenda = fitz.Rect(0, 220, 842, 595)
 
     recortada = _recortar_total_antes_de_leyenda(franja_total, franja_leyenda, misma_pagina=True)
     assert recortada == franja_total
 
-    # en páginas distintas tampoco hay nada que recortar, aunque las
-    # coordenadas coincidan
+
     franja_total_otra_pagina = fitz.Rect(0, 190, 842, 239)
     recortada_paginas_distintas = _recortar_total_antes_de_leyenda(
         franja_total_otra_pagina, franja_leyenda, misma_pagina=False
@@ -722,9 +615,7 @@ def test_recortar_total_antes_de_leyenda_no_toca_franja_que_no_se_superpone():
 
 
 def test_recortar_total_antes_de_leyenda_nunca_corta_su_propia_etiqueta():
-    """Caso extremo: si la leyenda arranca ANTES incluso de donde empieza
-    el total (algo raro, pero si pasara), no hay que recortar el total
-    hasta dejarlo con alto cero o negativo -mejor dejarlo como está."""
+
     franja_total = fitz.Rect(0, 190, 842, 239)
     franja_leyenda_antes_del_total = fitz.Rect(0, 185, 842, 595)
 
@@ -733,15 +624,7 @@ def test_recortar_total_antes_de_leyenda_nunca_corta_su_propia_etiqueta():
 
 
 def test_pie_de_pagina_duplica_el_total_cuando_esta_pegado_a_codificacion(tmp_path):
-    """Prueba de punta a punta del caso real de MNK: "CODIFICACIÓN" pegada
-    casi sin espacio bajo el total. El total propio debe conservar, como
-    mínimo, el alto de su propio renglón real (sin el margen de sobra) -ni
-    un pelo menos, aunque eso implique traslaparse un poco con el inicio
-    "crudo" de la leyenda- y la leyenda debe volver a incluir el total
-    completo en su propio techo -aunque salga duplicado, es preferible a
-    perder contenido. Se compara contra lo que las funciones reales
-    calculan de forma independiente sobre la misma página, así la prueba
-    no depende de adivinar métricas de fuente a mano."""
+
     ruta_poliza = tmp_path / "poliza_total_pegado.pdf"
     documento = fitz.open()
     pagina = documento.new_page(width=595, height=842)
@@ -750,14 +633,10 @@ def test_pie_de_pagina_duplica_el_total_cuando_esta_pegado_a_codificacion(tmp_pa
     _escribir_fila(pagina, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
     pagina.insert_text((36, 200), "TOTAL DE TRABAJADORES 1", fontsize=10)
     pagina.insert_text((36, 220), "TOTAL DE SALARIO 405710.71", fontsize=10)
-    # pegada casi sin espacio -bastante antes de que termine el margen fijo
-    # de abajo del total (_MARGEN_ABAJO_TOTAL, 26pt desde su último renglón)
     pagina.insert_text((36, 232), "CODIFICACIÓN", fontsize=10)
     documento.save(str(ruta_poliza))
     documento.close()
 
-    # referencia independiente: lo que las funciones reales calculan para
-    # esta misma página, antes de pasar por el pipeline completo
     documento_ref = fitz.open(ruta_poliza)
     pagina_ref = documento_ref[0]
     franja_total_ref = _franja_total_en_pagina(pagina_ref, "mnk")
@@ -765,7 +644,6 @@ def test_pie_de_pagina_duplica_el_total_cuando_esta_pegado_a_codificacion(tmp_pa
     alto_hoja = pagina_ref.rect.height
     documento_ref.close()
     assert franja_total_ref is not None and franja_leyenda_ref is not None
-    # confirma que este PDF de prueba de verdad reproduce el caso "pegado"
     assert franja_leyenda_ref.y0 < franja_total_ref.y1
 
     registros = [{"cedula": "111111111", "cliente": "Cliente Total Pegado", "nombre": "Juan Perez"}]
@@ -778,20 +656,13 @@ def test_pie_de_pagina_duplica_el_total_cuando_esta_pegado_a_codificacion(tmp_pa
         imagenes = [xref for p in documento_salida for xref, *_r in p.get_images(full=True)]
         assert len(imagenes) == 2
 
-        # las imágenes se guardan a 2x de escala (ver _pixmaps_pie_de_poliza)
         alto_total, alto_leyenda = (
             fitz.Pixmap(documento_salida.extract_image(xref)["image"]).height / 2 for xref in imagenes
         )
 
-        # el total propio nunca debe quedar más corto que su propio
-        # renglón real (sin el margen de sobra) -aunque eso implique
-        # traslaparse un poco con el inicio "crudo" de la leyenda
         alto_minimo_total = (franja_total_ref.y1 - _MARGEN_ABAJO_TOTAL) - franja_total_ref.y0
         assert alto_total >= alto_minimo_total - 1
 
-        # la leyenda debe volver a incluir el total completo -su alto debe
-        # acercarse a la distancia desde el techo del total hasta el fondo
-        # de la hoja, no solo desde "CODIFICACIÓN"
         alto_esperado_leyenda = alto_hoja - franja_total_ref.y0
         assert alto_leyenda > alto_esperado_leyenda - 5
     finally:
@@ -799,41 +670,28 @@ def test_pie_de_pagina_duplica_el_total_cuando_esta_pegado_a_codificacion(tmp_pa
 
 
 def test_techo_de_datos_no_confunde_numero_patronal_con_primera_fila():
-    """En CCSS, el número patronal (arriba del todo, ANTES del título de
-    columnas) también tiene 9+ dígitos -no debe confundirse con la
-    primera fila de un empleado ni recortar el encabezado de más de lo
-    debido."""
+
     documento = fitz.open()
     pagina = documento.new_page(width=595, height=842)
     pagina.insert_text((36, 30), "PLANILLA MENSUAL", fontsize=13)
-    # número patronal, con guiones, arriba del título de columnas
     pagina.insert_text((36, 60), "2-03101682626-001-001", fontsize=10)
     _escribir_fila(pagina, 100, [("APELLIDOS Y NOMBRES", 200), ("OBSERVACIONES", 100)])
 
     techo = _techo_de_datos(pagina, formato="ccss")
 
     assert techo is not None
-    # debe quedar cerca del título de columnas (y=100), no arriba, cerca
-    # del número patronal (y=60)
+
     assert techo > 90
 
 
 def test_encabezado_no_arrastra_la_primera_fila_de_datos_si_esta_muy_pegada(tmp_path):
-    """Si la primera fila de datos de la página queda muy pegada al
-    encabezado (menos que el margen fijo que usa _techo_de_datos), el
-    bloque de encabezado que se repite en el PDF de cada cliente no debe
-    arrastrar al primer empleado de esa página -aunque no sea la persona
-    buscada ni pertenezca a este cliente. Esto reproduce el caso real
-    donde el primer empleado de la póliza (ej. "Gamboa") aparecía pegado
-    justo después del encabezado en el PDF de CUALQUIER cliente de esa
-    póliza, sin importar a quién se buscara."""
+
     ruta_poliza = tmp_path / "poliza_header_apretado.pdf"
     documento = fitz.open()
     pagina = documento.new_page(width=595, height=842)
     pagina.insert_text((36, 40), "EMPRESA HEADER APRETADO", fontsize=13)
     _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
-    # primer empleado de la página, pegado al encabezado -no es la
-    # persona buscada ni está en el Excel de este cliente
+
     _escribir_fila(pagina, 112, [("999999999", 90), ("PRIMERO", 80), ("GAMBOA", 100), ("Ninguna", 90)])
     _escribir_fila(pagina, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
     documento.save(str(ruta_poliza))
@@ -855,18 +713,13 @@ def test_encabezado_no_arrastra_la_primera_fila_de_datos_si_esta_muy_pegada(tmp_
 
 
 def test_franja_del_total_no_incluye_la_ultima_fila_de_datos_pegada_arriba():
-    """Igual que con el encabezado repetido, el margen fijo del total
-    también puede pasarse de largo hacia la ÚLTIMA fila de datos real de
-    la página (no un encabezado repetido, sino un empleado cualquiera) si
-    quedan muy pegados, como en tablas de MNK con filas apretadas."""
+
     documento = fitz.open()
     pagina = documento.new_page(width=595, height=842)
     pagina.insert_text((36, 40), "EMPRESA PRUEBA", fontsize=13)
     _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
     _escribir_fila(pagina, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
-    # el total queda pegado a la última fila de datos (pero con margen
-    # suficiente para no tener que elegir entre cortar la etiqueta del
-    # total o arrastrar la fila -ver la otra prueba para el caso límite)
+
     pagina.insert_text((36, 156), "TOTAL DE TRABAJADORES 1", fontsize=10)
     pagina.insert_text((36, 176), "TOTAL DE SALARIO 405710.71", fontsize=10)
 
@@ -878,32 +731,22 @@ def test_franja_del_total_no_incluye_la_ultima_fila_de_datos_pegada_arriba():
 
 
 def test_franja_del_total_nunca_corta_su_propia_etiqueta(tmp_path):
-    """Si la última fila de datos queda TAN pegada al total que no hay
-    espacio para evitar el traslape sin cortar la etiqueta del total,
-    hay que priorizar no cortarla -mejor arrastrar un poco de la fila de
-    al lado que dejar el total con la etiqueta rota (lo que pasó de
-    verdad con un PDF real de CCSS)."""
+
     documento = fitz.open()
     pagina = documento.new_page(width=595, height=842)
     pagina.insert_text((36, 40), "EMPRESA PRUEBA", fontsize=13)
     _escribir_fila(pagina, 100, _TITULOS_COLUMNAS)
     _escribir_fila(pagina, 140, [("111111111", 90), ("JUAN", 80), ("PEREZ MORA", 100), ("Ninguna", 90)])
-    # caso extremo: el total queda pegadísimo a la última fila, sin
-    # espacio real para separarlos del todo
     pagina.insert_text((36, 150), "TOTAL DE TRABAJADORES 1", fontsize=10)
     pagina.insert_text((36, 170), "TOTAL DE SALARIO 405710.71", fontsize=10)
-
     franja_total = _franja_total_en_pagina(pagina, formato="mnk")
-
     assert franja_total is not None
     rect_etiqueta_total = pagina.search_for("TOTAL DE TRABAJADORES")[0]
     assert franja_total.y0 <= rect_etiqueta_total.y0
 
 
 def test_polizas_distintas_conservan_su_propio_encabezado(tmp_path):
-    """Si el mismo cliente tiene oficiales en dos pólizas (archivos)
-    distintas, cada una debe llegar en su propia hoja con su propio
-    encabezado -sin mezclarse con el de la otra póliza."""
+
     ruta_poliza_a = tmp_path / "poliza_a.pdf"
     ruta_poliza_b = tmp_path / "poliza_b.pdf"
     _crear_pdf_planilla(ruta_poliza_a, "EMPRESA POLIZA A", [[("111111111", "JUAN", "PEREZ MORA", "Ninguna")]])
@@ -927,9 +770,6 @@ def test_polizas_distintas_conservan_su_propio_encabezado(tmp_path):
 
 
 def test_encabezado_se_repite_si_la_poliza_desborda_una_hoja(tmp_path):
-    """Si una misma póliza trae tantos oficiales que no caben en una sola
-    hoja de salida, la segunda hoja también debe traer el encabezado
-    arriba (si no, se pierde de vista qué póliza es)."""
     cantidad_filas = 60
     filas = [
         (f"{100000000 + i}", "NOMBRE", f"APELLIDO {i}", "Ninguna")
@@ -954,10 +794,7 @@ def test_encabezado_se_repite_si_la_poliza_desborda_una_hoja(tmp_path):
         for pagina_salida in documento:
             assert "EMPRESA POLIZA LARGA" in pagina_salida.get_text()
             texto_completo += pagina_salida.get_text()
-        # el desborde de hoja ahora también guarda a disco y libera memoria
-        # a mitad de camino (ver _flush_a_disco en _agregar_bloque) -esto
-        # confirma que ninguna fila se pierde ni se corrompe al reabrir el
-        # documento para seguir agregando contenido
+
         for i in range(cantidad_filas):
             assert f"APELLIDO {i}" in texto_completo
     finally:
@@ -965,8 +802,6 @@ def test_encabezado_se_repite_si_la_poliza_desborda_una_hoja(tmp_path):
 
 
 def test_oficial_asignado_a_multiples_clientes_aparece_en_ambos_pdfs(ruta_pdf_ejemplo, tmp_path):
-    """Si Juan Perez está asignado en el Excel tanto a 'Cliente Walmart' como
-    a 'Cliente BAC', su fila debe exportarse al PDF de ambos clientes."""
     registros_multiples = [
         {"cedula": "111111111", "cliente": "Cliente Walmart", "nombre": "Juan Perez"},
         {"cedula": "111111111", "cliente": "Cliente BAC", "nombre": "Juan Perez"},
@@ -976,11 +811,11 @@ def test_oficial_asignado_a_multiples_clientes_aparece_en_ambos_pdfs(ruta_pdf_ej
         [ruta_pdf_ejemplo], registros_multiples, str(tmp_path / "salida"), formato="mnk"
     )
 
-    # 1. Ambos clientes deben tener su propio archivo generado
+
     assert "Cliente Walmart" in resultado["archivos_por_cliente"]
     assert "Cliente BAC" in resultado["archivos_por_cliente"]
 
-    # 2. Ambos PDFs deben contener la fila de Juan Perez
+
     doc_walmart = fitz.open(resultado["archivos_por_cliente"]["Cliente Walmart"])
     doc_bac = fitz.open(resultado["archivos_por_cliente"]["Cliente BAC"])
     try:
@@ -990,13 +825,11 @@ def test_oficial_asignado_a_multiples_clientes_aparece_en_ambos_pdfs(ruta_pdf_ej
         doc_walmart.close()
         doc_bac.close()
 
-    # 3. No debe quedar como cédula no encontrada
+
     assert resultado["no_encontrados"] == []
 
 
 def test_exportar_por_cliente_sin_resaltado_no_agrega_anotaciones(ruta_pdf_ejemplo, registros_ejemplo, tmp_path):
-    """Cuando resaltar_filas=False, el PDF generado debe contener los textos
-    recortados pero ninguna anotación de resaltado (highlight)."""
     carpeta_salida = tmp_path / "salida_limpia"
 
     resultado = resaltar_por_cedula_y_exportar_por_cliente(
@@ -1011,16 +844,16 @@ def test_exportar_por_cliente_sin_resaltado_no_agrega_anotaciones(ruta_pdf_ejemp
     documento = fitz.open(ruta_cliente)
     try:
         pagina = documento[0]
-        # Verificar que el texto existe
+
         assert "JUAN" in pagina.get_text()
-        # Verificar que NO tiene ninguna anotación de resaltado
+
         assert pagina.first_annot is None
     finally:
         documento.close()
 
 
 def test_exportar_por_cliente_con_resaltado_agrega_anotacion(ruta_pdf_ejemplo, registros_ejemplo, tmp_path):
-    """Por defecto (resaltar_filas=True), el PDF debe incluir las anotaciones."""
+
     carpeta_salida = tmp_path / "salida_resaltada"
 
     resultado = resaltar_por_cedula_y_exportar_por_cliente(
@@ -1041,14 +874,11 @@ def test_exportar_por_cliente_con_resaltado_agrega_anotacion(ruta_pdf_ejemplo, r
         documento.close()
 
 
-# --- resaltar_por_cedula_sin_recortar ("Solo resaltar, sin recortar ni
-# separar por cliente") ------------------------------------------------
+
 
 
 def test_solo_resaltar_mantiene_el_pdf_completo_e_intacto(ruta_pdf_ejemplo, registros_ejemplo, tmp_path):
-    """A diferencia del modo por cliente, acá no se recorta ni se fusiona
-    nada -el PDF de salida debe tener las mismas páginas y el mismo texto
-    que el original (encabezado, filas de todos los clientes, todo)."""
+
     resultado = resaltar_por_cedula_sin_recortar(
         [ruta_pdf_ejemplo], registros_ejemplo, str(tmp_path / "salida")
     )
@@ -1068,9 +898,6 @@ def test_solo_resaltar_mantiene_el_pdf_completo_e_intacto(ruta_pdf_ejemplo, regi
 
 
 def test_solo_resaltar_agrega_una_anotacion_por_fila_encontrada(ruta_pdf_ejemplo, registros_ejemplo, tmp_path):
-    """registros_ejemplo trae 3 cédulas que sí aparecen en el PDF (Juan,
-    Maria Jose y Luis) y una que no (999999999) -deben quedar exactamente
-    3 filas resaltadas, ni una de más ni de menos."""
     resultado = resaltar_por_cedula_sin_recortar(
         [ruta_pdf_ejemplo], registros_ejemplo, str(tmp_path / "salida")
     )
@@ -1086,10 +913,7 @@ def test_solo_resaltar_agrega_una_anotacion_por_fila_encontrada(ruta_pdf_ejemplo
 
 
 def test_solo_resaltar_entrega_un_pdf_por_archivo_no_por_cliente(ruta_pdf_ejemplo, registros_ejemplo, tmp_path):
-    """registros_ejemplo reparte sus cédulas encontradas entre DOS
-    clientes distintos (Cliente Prueba Uno y Cliente Prueba Dos), pero
-    todos están en el MISMO archivo de origen -debe salir un solo PDF de
-    salida, no uno por cliente."""
+
     resultado = resaltar_por_cedula_sin_recortar(
         [ruta_pdf_ejemplo], registros_ejemplo, str(tmp_path / "salida")
     )
@@ -1107,9 +931,7 @@ def test_solo_resaltar_reporta_cedulas_no_encontradas(ruta_pdf_ejemplo, registro
 
 
 def test_solo_resaltar_encuentra_extranjero_por_numero_de_asegurado(tmp_path):
-    """Mismo caso real de la CCSS que en el modo por cliente: el DIMEX no
-    aparece en el PDF, pero el número de asegurado sí -debe encontrarse
-    igual en este modo, sin necesitar recorte."""
+
     ruta_poliza = tmp_path / "poliza_ccss.pdf"
     _crear_pdf_planilla(
         ruta_poliza,

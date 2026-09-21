@@ -1,6 +1,4 @@
-"""Pruebas de integración de las rutas HTTP de api/index.py (Flask
-test_client, sin arrancar un servidor real). Usa los mismos PDF/registros
-inventados de conftest.py -nada de datos reales de empleados."""
+
 import base64
 import io
 import json
@@ -19,10 +17,6 @@ from api.index import _historial_solicitudes_por_ip, _limpiar_temporales_antiguo
 
 @pytest.fixture
 def cliente_flask():
-    # cada prueba arranca con el historial del límite de solicitudes
-    # limpio -si no, el orden en que pytest corre los tests (todas comparten
-    # la misma IP de test_client) contaminaría el conteo entre una y otra
-    # (ver test_api_limite.py, que hace lo mismo para sus propias pruebas).
     _historial_solicitudes_por_ip.clear()
     return app.test_client()
 
@@ -33,8 +27,7 @@ def _abrir_pdf(ruta):
 
 
 def _crear_excel_cliente(registros):
-    """Excel con columnas Identificación/Cliente/Nombre, como lo subiría
-    un usuario para el Modo Cliente."""
+
     libro = openpyxl.Workbook()
     hoja = libro.active
     hoja.append(["Identificacion", "Cliente", "Nombre"])
@@ -120,10 +113,7 @@ def test_procesar_modo_cliente_incluye_excel_de_facturacion(cliente_flask, ruta_
 
 
 def test_procesar_modo_cliente_usa_columna_cliente_y_no_empresa(cliente_flask, ruta_pdf_ejemplo):
-    # Reproduce un bug real: las planillas de VMA traen "Empresa" (unidad
-    # interna, ej. "Comer") Y "CLIENTE" (a quién se factura, ej. "ADT") en
-    # el mismo Excel -el sistema separaba por "Empresa" por estar primero
-    # en las columnas, en vez de por "CLIENTE".
+    
     libro = openpyxl.Workbook()
     hoja = libro.active
     hoja.append([
@@ -156,7 +146,6 @@ def test_procesar_modo_cliente_usa_columna_cliente_y_no_empresa(cliente_flask, r
 
 
 def test_procesar_modo_cliente_manda_no_encontrados_en_cabecera(cliente_flask, ruta_pdf_ejemplo, registros_ejemplo):
-    # registros_ejemplo trae una cédula (999999999) que no está en el PDF
     datos = {
         "excel": (_crear_excel_cliente(registros_ejemplo), "planilla.xlsx"),
         "pdfs": (_abrir_pdf(ruta_pdf_ejemplo), "planilla.pdf"),
@@ -172,9 +161,7 @@ def test_procesar_modo_cliente_manda_no_encontrados_en_cabecera(cliente_flask, r
 
 
 def test_procesar_multiples_pdfs_mismo_nombre(cliente_flask, ruta_pdf_ejemplo):
-    # Es común descargar "Planilla.pdf" de dos portales distintos (ej. CCSS
-    # de San José y de Heredia) con el mismo nombre de archivo -ninguno de
-    # los dos se debe perder ni pisar al otro.
+   
     datos = {
         "nombres": "Juan Perez",
         "pdfs": [
@@ -214,7 +201,6 @@ def test_procesar_modo_cliente_con_csv_delimitado_por_comas(cliente_flask, ruta_
 
 
 def test_procesar_modo_cliente_con_csv_punto_y_coma_latin1(cliente_flask, ruta_pdf_ejemplo):
-    # CSV con punto y coma y caracteres con tilde/ñ en Latin-1 (exportación típica de ERP)
     contenido_csv = (
         "Cédula;Cuenta;Colaborador\n"
         "111111111;Cliente Prueba Uno;Juan Pérez\n"
@@ -290,25 +276,20 @@ def test_detectar_modo_excel_columnas_no_reconocidas_da_error(cliente_flask):
 def test_limpiar_temporales_antiguos_borra_viejos_y_conserva_nuevos():
     temp_dir = Path(tempfile.gettempdir())
 
-    # 1. Crear carpeta vieja simulada (antigüedad de 2 horas)
     carpeta_vieja = temp_dir / "resaltado_cliente_test_antigua"
     carpeta_vieja.mkdir(parents=True, exist_ok=True)
     hace_dos_horas = time.time() - 7200
     os.utime(str(carpeta_vieja), (hace_dos_horas, hace_dos_horas))
 
-    # 2. Crear carpeta reciente (antigüedad de 5 segundos)
     carpeta_nueva = temp_dir / "resaltado_cliente_test_reciente"
     carpeta_nueva.mkdir(parents=True, exist_ok=True)
 
     try:
-        # Ejecutar limpieza con límite de 1 hora (3600s)
         _limpiar_temporales_antiguos(segundos_vida=3600)
 
-        # Verificar: la vieja debió borrarse y la nueva conservarse
         assert not carpeta_vieja.exists()
         assert carpeta_nueva.exists()
     finally:
-        # Limpieza manual del fixture
         if carpeta_vieja.exists():
             shutil.rmtree(carpeta_vieja, ignore_errors=True)
         if carpeta_nueva.exists():
