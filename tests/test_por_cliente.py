@@ -213,7 +213,7 @@ def test_encabezado_sale_de_la_pagina_1_aunque_el_cliente_empiece_en_la_pagina_2
 
     pagina2 = documento.new_page(width=595, height=842)
     _escribir_fila(pagina2, 40, _TITULOS_COLUMNAS)
-    _escribir_fila(pagina2, 80, [("111111111", "JUAN", "PEREZ NUEVO", "Ninguna")])
+    _escribir_fila(pagina2, 80, [("111111111", 90), ("JUAN", 80), ("PEREZ NUEVO", 100), ("Ninguna", 90)])
 
     ruta_poliza = tmp_path / "poliza_multipagina.pdf"
     documento.save(str(ruta_poliza))
@@ -456,7 +456,7 @@ def test_pie_de_pagina_usa_la_ultima_fila_si_el_texto_del_total_no_se_encuentra(
 
 
 def test_respaldo_posicional_no_arrastra_el_espacio_en_blanco_hasta_el_fondo_de_la_hoja(tmp_path):
-    
+    ruta_poliza = tmp_path / "poliza_hueco_grande.pdf"
     documento = fitz.open()
     pagina = documento.new_page(width=595, height=842)
     pagina.insert_text((36, 40), "EMPRESA CON HUECO GRANDE", fontsize=13)
