@@ -622,10 +622,12 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 )
 
         destino = fitz.Rect(0, estado["y"], estado["ancho"], estado["y"] + alto_bloque)
-        estado["pagina"].show_pdf_page(destino, documento_origen, pagina_origen.number, clip=franja)
+        with cronometro.medir("show_pdf_page"):
+            estado["pagina"].show_pdf_page(destino, documento_origen, pagina_origen.number, clip=franja)
         if resaltar:
-            anotacion = estado["pagina"].add_highlight_annot(destino)
-            anotacion.update()
+            with cronometro.medir("resaltar_fila"):
+                anotacion = estado["pagina"].add_highlight_annot(destino)
+                anotacion.update()
         estado["y"] += alto_bloque + _ESPACIO_ENTRE_FILAS
 
     def _agregar_imagen_cacheada(estado: dict, png_bytes: bytes, ancho_original: float, alto_original: float) -> None:

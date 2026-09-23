@@ -181,6 +181,35 @@ def _medir_zip(rutas_salida: list[str]) -> dict:
     return resultado
 
 
+def _desglose_tamano(rutas_salida: list[str]) -> dict:
+    """En qué se van los MB de los PDFs de salida: imágenes (el pie de
+    póliza va como PNG), Form XObjects (lo que copia show_pdf_page) u otros
+    streams (fuentes, contenido de página, apariencia de resaltados).
+    "sin_comprimir" es el subconjunto de todo lo anterior que no trae Filter."""
+    megas = {"imagenes": 0, "xobjects_form": 0, "otros_streams": 0, "sin_comprimir": 0}
+    imagenes = 0
+    for ruta in rutas_salida:
+        documento = fitz.open(ruta)
+        for xref in range(1, documento.xref_length()):
+            if not documento.xref_is_stream(xref):
+                continue
+            tamano = len(documento.xref_stream_raw(xref) or b"")
+            subtipo = documento.xref_get_key(xref, "Subtype")[1]
+            if subtipo == "/Image":
+                megas["imagenes"] += tamano
+                imagenes += 1
+            elif subtipo == "/Form":
+                megas["xobjects_form"] += tamano
+            else:
+                megas["otros_streams"] += tamano
+            if documento.xref_get_key(xref, "Filter")[0] == "null":
+                megas["sin_comprimir"] += tamano
+        documento.close()
+    resultado = {clave: round(valor / 1024 / 1024, 2) for clave, valor in megas.items()}
+    resultado["cantidad_imagenes"] = imagenes
+    return resultado
+
+
 def correr_modo(modo: str, rutas: list[str], registros: list[dict], nombres: list[str], perfil: bool) -> dict:
     """Corre en un proceso hijo (ver main)."""
     carpeta_salida = Path(tempfile.mkdtemp(prefix=f"benchmark_{modo}_"))
@@ -230,6 +259,7 @@ def correr_modo(modo: str, rutas: list[str], registros: list[dict], nombres: lis
         "archivos_salida": len(rutas_salida),
         "mb_salida": round(sum(os.path.getsize(r) for r in rutas_salida) / 1024 / 1024, 2),
         "zip": _medir_zip(rutas_salida) if rutas_salida else None,
+        "desglose_mb": _desglose_tamano(rutas_salida) if rutas_salida else None,
         "errores": errores,
         "perfil": texto_perfil,
     }
@@ -243,7 +273,7 @@ def imprimir(resultado: dict) -> None:
     segundos = resultado["tiempos"].get("segundos", {})
     for fase, s in sorted(segundos.items(), key=lambda par: -par[1]):
         print(f"  {fase:<24} {s:>8.2f} s  {100 * s / total if total else 0:5.1f} %")
-    print("  (copiar_filas incluye reabrir_pdf_cliente; la suma puede pasar de 100 % por eso)")
+    print("  (copiar_filas incluye show_pdf_page, resaltar_fila y reabrir_pdf_cliente; la suma pasa de 100 % por eso)")
     conteos = resultado["tiempos"].get("conteos", {})
     if conteos:
         print("  conteos: " + ", ".join(f"{k}={v}" for k, v in sorted(conteos.items())))
@@ -251,6 +281,8 @@ def imprimir(resultado: dict) -> None:
         z = resultado["zip"]
         print(f"  zip deflated: {z['deflated']['segundos']:.2f} s, {z['deflated']['mb']} MB | "
               f"zip stored: {z['stored']['segundos']:.2f} s, {z['stored']['mb']} MB")
+    if resultado["desglose_mb"]:
+        print("  tamaño de salida (MB): " + ", ".join(f"{k}={v}" for k, v in resultado["desglose_mb"].items()))
     if resultado["errores"]:
         print(f"  errores: {resultado['errores']}")
     if resultado["perfil"]:
