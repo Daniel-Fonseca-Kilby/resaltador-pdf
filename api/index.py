@@ -522,7 +522,9 @@ def _procesar_modo_cliente(
         ruta_zip = Path(archivo_zip_temporal.name)
         archivo_zip_temporal.close()
 
-        with zipfile.ZipFile(ruta_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+        # compresslevel=1: los PDFs ya salen comprimidos (_compactar_pdf), el
+        # nivel por defecto gastaba ~6 s por lote sin achicar casi nada
+        with zipfile.ZipFile(ruta_zip, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
             inicio = time.perf_counter()
             for _clave, ruta_pdf in sorted(archivos_generados.items()):
                 zf.write(ruta_pdf, arcname=Path(ruta_pdf).name)

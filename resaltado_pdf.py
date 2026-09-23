@@ -427,6 +427,28 @@ def _franjas_pie_de_pagina(pagina, formato: str = "auto", textpage=None) -> list
     return franjas
 
 
+def _compactar_pdf(ruta: Path) -> None:
+    """Reescribe el PDF completo sin objetos duplicados y con todo
+    comprimido. show_pdf_page arrastra las imágenes de la página de origen
+    (el logo del encabezado) aunque el recorte no las muestre, y cada
+    guardado incremental por cambio de póliza deja otra copia sin
+    comprimir: en un lote real el 97 % del peso de salida eran imágenes,
+    720 de ellas repetidas dentro del mismo PDF. Si falla, se queda el
+    archivo como estaba -más pesado, pero correcto."""
+    temporal = ruta.with_name(ruta.stem + ".compacto.pdf")
+    try:
+        documento = fitz.open(str(ruta))
+        try:
+            documento.save(
+                str(temporal), garbage=4, deflate=True, deflate_images=True, deflate_fonts=True,
+            )
+        finally:
+            documento.close()
+        temporal.replace(ruta)
+    except Exception:
+        temporal.unlink(missing_ok=True)
+
+
 _MARGEN_PAGINA = 24  # margen arriba/abajo de cada página de salida
 _ESPACIO_ENTRE_FILAS = 3
 
@@ -893,6 +915,8 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     archivos_por_cliente = {}
     for cliente, estado in estado_por_cliente.items():
         _flush_a_disco(estado)
+        with cronometro.medir("compactar_pdf_cliente"):
+            _compactar_pdf(estado["ruta_salida"])
         archivos_por_cliente[cliente] = str(estado["ruta_salida"])
 
     detalle_registros, no_encontrados = _construir_detalle_registros(

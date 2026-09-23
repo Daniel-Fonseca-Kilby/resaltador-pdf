@@ -1020,3 +1020,59 @@ def test_sin_recortar_reporta_tiempos_por_fase(ruta_pdf_ejemplo, registros_ejemp
     )
     assert resultado["tiempos"]["conteos"]["paginas"] == 1
     assert "guardar_disco" in resultado["tiempos"]["segundos"]
+
+
+def test_pdf_de_cliente_queda_compactado_y_legible(ruta_pdf_ejemplo, registros_ejemplo, tmp_path):
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [ruta_pdf_ejemplo], registros_ejemplo, str(tmp_path / "salida"), formato="mnk"
+    )
+    assert "compactar_pdf_cliente" in resultado["tiempos"]["segundos"]
+    for ruta in resultado["archivos_por_cliente"].values():
+        assert not list(Path(ruta).parent.glob("*.compacto.pdf"))
+        documento = fitz.open(ruta)
+        assert documento.page_count >= 1
+        assert documento.xref_length() > 1
+        documento.close()
+
+
+def test_compactar_pdf_mantiene_logo_y_pie_en_cada_pagina(tmp_path):
+    """Imita el flujo real: el PDF de cliente se guarda y se reabre en cada
+    cambio de póliza, y cada vez se vuelve a insertar el mismo logo -eso
+    deja copias duplicadas. Compactar debe dejar una sola copia guardada
+    pero la imagen tiene que seguir viéndose en TODAS las páginas, igual
+    que antes (píxel por píxel)."""
+    from resaltado_pdf import _compactar_pdf
+
+    logo = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 60, 60), False)
+    logo.set_rect(logo.irect, (200, 30, 30))
+    png_logo = logo.tobytes("png")
+
+    ruta = tmp_path / "cliente.pdf"
+    for numero_pagina in range(3):
+        documento = fitz.open(str(ruta)) if ruta.exists() else fitz.open()
+        pagina = documento.new_page(width=595, height=842)
+        pagina.insert_image(fitz.Rect(36, 20, 96, 80), stream=png_logo)  # encabezado
+        pagina.insert_text((36, 800), f"TOTAL DE TRABAJADORES pagina {numero_pagina}", fontsize=9)  # pie
+        if ruta.exists():
+            documento.save(str(ruta), incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
+        else:
+            documento.save(str(ruta))
+        documento.close()
+
+    def _estado(ruta_pdf):
+        documento = fitz.open(str(ruta_pdf))
+        imagenes_por_pagina = [len(p.get_images()) for p in documento]
+        xrefs_distintos = {img[0] for p in documento for img in p.get_images()}
+        render = [p.get_pixmap(matrix=fitz.Matrix(1, 1)).samples for p in documento]
+        documento.close()
+        return imagenes_por_pagina, xrefs_distintos, render
+
+    antes_por_pagina, antes_xrefs, antes_render = _estado(ruta)
+    assert len(antes_xrefs) == 3  # una copia del logo por cada guardado
+
+    _compactar_pdf(ruta)
+
+    despues_por_pagina, despues_xrefs, despues_render = _estado(ruta)
+    assert despues_por_pagina == antes_por_pagina == [1, 1, 1]  # el logo sigue en cada página
+    assert len(despues_xrefs) == 1  # pero guardado una sola vez
+    assert despues_render == antes_render  # y se ve idéntico
