@@ -1,6 +1,9 @@
 import io
+import time
 import unicodedata
-from dataclasses import dataclass
+from collections import defaultdict
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
@@ -9,12 +12,39 @@ import pymupdf as fitz  # alias tradicional de PyMuPDF
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 
+class _Cronometro:
+    """Acumula segundos (y conteos) por fase, para ver en el log dónde se
+    va el tiempo de un lote -ver deploy/benchmark_rendimiento.py."""
+
+    def __init__(self):
+        self.segundos: dict[str, float] = defaultdict(float)
+        self.conteos: dict[str, int] = defaultdict(int)
+
+    @contextmanager
+    def medir(self, fase: str):
+        inicio = time.perf_counter()
+        try:
+            yield
+        finally:
+            self.segundos[fase] += time.perf_counter() - inicio
+
+    def contar(self, que: str, cantidad: int = 1) -> None:
+        self.conteos[que] += cantidad
+
+    def resumen(self) -> dict:
+        return {
+            "segundos": {fase: round(s, 3) for fase, s in self.segundos.items()},
+            "conteos": dict(self.conteos),
+        }
+
+
 @dataclass
 class ResultadoResaltado:
     """Resultado de procesar un PDF en modo simple."""
     archivo: str
     coincidencias_por_nombre: dict  # {"JUAN PEREZ": 3, "MARIA LOPEZ": 0}
     ruta_salida: str
+    tiempos: dict = field(default_factory=dict)
 
 
 @lru_cache(maxsize=4096)
@@ -116,7 +146,9 @@ def _buscar_por_fila(pagina, palabras: list[str], textpage=None):
 
 def resaltar_nombres_en_pdf(ruta_pdf: str, nombres: list[str], ruta_salida: str) -> ResultadoResaltado:
     """Resalta cada nombre de la lista en el PDF y guarda la copia en ruta_salida."""
-    documento = fitz.open(ruta_pdf)
+    cronometro = _Cronometro()
+    with cronometro.medir("abrir_pdf"):
+        documento = fitz.open(ruta_pdf)
     if documento.is_encrypted:
         documento.close()
         raise ValueError(
@@ -126,41 +158,53 @@ def resaltar_nombres_en_pdf(ruta_pdf: str, nombres: list[str], ruta_salida: str)
     conteo = {nombre: 0 for nombre in nombres}
 
     for pagina in documento:
-        textpage = pagina.get_textpage()
-        texto_pagina_norm = _normalizar(pagina.get_text(textpage=textpage))
+        cronometro.contar("paginas")
+        with cronometro.medir("extraer_texto"):
+            textpage = pagina.get_textpage()
+            texto_pagina_norm = _normalizar(pagina.get_text(textpage=textpage))
 
         for nombre in nombres:
             nombre_limpio = nombre.strip()
             if not nombre_limpio:
                 continue
 
-            palabras = [p for p in nombre_limpio.split() if len(p) >= 3]
-            if not _puede_aparecer_en_pagina(texto_pagina_norm, nombre_limpio, palabras):
+            with cronometro.medir("prefiltro_nombres"):
+                palabras = [p for p in nombre_limpio.split() if len(p) >= 3]
+                puede_aparecer = _puede_aparecer_en_pagina(texto_pagina_norm, nombre_limpio, palabras)
+            if not puede_aparecer:
                 continue
+            cronometro.contar("busquedas_en_pagina")
 
-            coincidencias = _buscar_con_variantes(pagina, nombre_limpio, textpage=textpage)
+            with cronometro.medir("buscar"):
+                coincidencias = _buscar_con_variantes(pagina, nombre_limpio, textpage=textpage)
 
             if coincidencias:
-                for rect in coincidencias:
-                    anotacion = pagina.add_highlight_annot(rect)
-                    anotacion.update()
-                    conteo[nombre] += 1
+                with cronometro.medir("resaltar"):
+                    for rect in coincidencias:
+                        anotacion = pagina.add_highlight_annot(rect)
+                        anotacion.update()
+                        conteo[nombre] += 1
                 continue
 
             # no aparece junto: puede que nombre y apellido queden en columnas distintas
-            for fila in _buscar_por_fila(pagina, palabras, textpage=textpage):
-                for rect in fila:
-                    anotacion = pagina.add_highlight_annot(rect)
-                    anotacion.update()
-                conteo[nombre] += 1
+            with cronometro.medir("buscar_por_fila"):
+                filas = _buscar_por_fila(pagina, palabras, textpage=textpage)
+            with cronometro.medir("resaltar"):
+                for fila in filas:
+                    for rect in fila:
+                        anotacion = pagina.add_highlight_annot(rect)
+                        anotacion.update()
+                    conteo[nombre] += 1
 
-    documento.save(ruta_salida)
-    documento.close()
+    with cronometro.medir("guardar_disco"):
+        documento.save(ruta_salida)
+        documento.close()
 
     return ResultadoResaltado(
         archivo=Path(ruta_pdf).name,
         coincidencias_por_nombre=conteo,
         ruta_salida=ruta_salida,
+        tiempos=cronometro.resumen(),
     )
 
 
@@ -494,6 +538,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     formato: str = "auto",
     resaltar_filas: bool = True,
 ) -> dict:
+    cronometro = _Cronometro()
     registros_unicos, mapa_cedulas, mapa_id_a_cedula_real = _construir_mapas_cedula(registros)
 
     estado_por_cliente: dict[str, dict] = {}
@@ -529,21 +574,25 @@ def resaltar_por_cedula_y_exportar_por_cliente(
         """Reabre el PDF del cliente si ya se había guardado y cerrado
         (ver _flush_a_disco)."""
         if estado["documento"] is None:
-            estado["documento"] = fitz.open(str(estado["ruta_salida"]))
+            cronometro.contar("reaperturas_pdf_cliente")
+            with cronometro.medir("reabrir_pdf_cliente"):
+                estado["documento"] = fitz.open(str(estado["ruta_salida"]))
             estado["pagina"] = None
 
     def _flush_a_disco(estado: dict) -> None:
-        
+
         documento = estado["documento"]
         if documento is None:
             return
-        ruta = str(estado["ruta_salida"])
-        if estado["guardado_en_disco"]:
-            documento.save(ruta, incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
-        else:
-            documento.save(ruta)
-            estado["guardado_en_disco"] = True
-        documento.close()
+        cronometro.contar("guardados_pdf_cliente")
+        with cronometro.medir("guardar_pdf_cliente"):
+            ruta = str(estado["ruta_salida"])
+            if estado["guardado_en_disco"]:
+                documento.save(ruta, incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
+            else:
+                documento.save(ruta)
+                estado["guardado_en_disco"] = True
+            documento.close()
         estado["documento"] = None
         estado["pagina"] = None
 
@@ -607,6 +656,11 @@ def resaltar_por_cedula_y_exportar_por_cliente(
         if ruta_pdf_saliente in pixmaps_pie_por_archivo:
             return pixmaps_pie_por_archivo[ruta_pdf_saliente]
 
+        cronometro.contar("pies_renderizados")
+        with cronometro.medir("renderizar_pie"):
+            return _pixmaps_pie_de_poliza_sin_cache(ruta_pdf_saliente)
+
+    def _pixmaps_pie_de_poliza_sin_cache(ruta_pdf_saliente: str) -> list[tuple]:
         resultado: list[tuple] = []
         try:
             documento_pie = fitz.open(ruta_pdf_saliente)
@@ -742,13 +796,16 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     def _agregar_pie_de_poliza(estado: dict, ruta_pdf_saliente: str) -> None:
         """Cierra la póliza que este cliente está dejando atrás con su
         propio total, antes de pasar a la siguiente."""
-        for png_bytes, ancho_pagina, alto_franja in _pixmaps_pie_de_poliza(ruta_pdf_saliente):
-            _agregar_imagen_cacheada(estado, png_bytes, ancho_pagina, alto_franja)
+        bloques_pie = _pixmaps_pie_de_poliza(ruta_pdf_saliente)
+        with cronometro.medir("insertar_pie"):
+            for png_bytes, ancho_pagina, alto_franja in bloques_pie:
+                _agregar_imagen_cacheada(estado, png_bytes, ancho_pagina, alto_franja)
 
     for ruta_pdf in rutas_pdfs:
         nombre_archivo = Path(ruta_pdf).name
         try:
-            documento = fitz.open(ruta_pdf)
+            with cronometro.medir("abrir_pdf"):
+                documento = fitz.open(ruta_pdf)
         except Exception as error:
             errores_por_archivo[nombre_archivo] = f"No se pudo abrir el archivo: {error}"
             continue
@@ -765,14 +822,20 @@ def resaltar_por_cedula_y_exportar_por_cliente(
 
         try:
             for pagina in documento:
-                textpage = pagina.get_textpage()
-                palabras = pagina.get_text("words", textpage=textpage)
-                y0s_cedulas_pagina = _y0s_anclas_fila(pagina, textpage=textpage)
+                cronometro.contar("paginas")
+                with cronometro.medir("extraer_texto"):
+                    textpage = pagina.get_textpage()
+                    palabras = pagina.get_text("words", textpage=textpage)
+                    y0s_cedulas_pagina = _y0s_anclas_fila(pagina, textpage=textpage)
+
+                with cronometro.medir("buscar_cedulas"):
+                    coincidencias_pagina = list(_localizar_coincidencias_de_cedula(
+                        pagina, palabras, y0s_cedulas_pagina, mapa_cedulas, mapa_id_a_cedula_real,
+                    ))
+                cronometro.contar("filas_encontradas", len(coincidencias_pagina))
 
                 franjas_vistas: dict[str, list] = {}
-                for franja, clientes, clave_cedula, hallado_por_numero_asegurado in _localizar_coincidencias_de_cedula(
-                    pagina, palabras, y0s_cedulas_pagina, mapa_cedulas, mapa_id_a_cedula_real,
-                ):
+                for franja, clientes, clave_cedula, hallado_por_numero_asegurado in coincidencias_pagina:
                     for cliente in clientes:
                         polizas_encontradas.setdefault((clave_cedula, cliente), set()).add(nombre_archivo)
                         if hallado_por_numero_asegurado:
@@ -788,11 +851,13 @@ def resaltar_por_cedula_y_exportar_por_cliente(
 
                         if estado["archivo_actual"] != ruta_pdf:
                             if estado["archivo_actual"] is not None:
+                                cronometro.contar("cambios_de_poliza")
                                 _agregar_pie_de_poliza(estado, estado["archivo_actual"])
                                 _flush_a_disco(estado)
                             if not encabezado_calculado:
                                 primera_pagina = documento[0]
-                                techo_pagina1 = _techo_de_datos(primera_pagina, formato)
+                                with cronometro.medir("detectar_encabezado"):
+                                    techo_pagina1 = _techo_de_datos(primera_pagina, formato)
                                 if techo_pagina1 is not None and techo_pagina1 > 4:
                                     encabezado_archivo = {
                                         "documento": documento,
@@ -806,12 +871,14 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                             estado["archivo_actual"] = ruta_pdf
                             estado["encabezado_actual"] = encabezado_archivo
                             if encabezado_archivo is not None:
-                                _agregar_bloque(
-                                    estado, encabezado_archivo["documento"], encabezado_archivo["pagina"],
-                                    encabezado_archivo["franja"], resaltar=False, repetir_encabezado=False,
-                                )
+                                with cronometro.medir("copiar_filas"):
+                                    _agregar_bloque(
+                                        estado, encabezado_archivo["documento"], encabezado_archivo["pagina"],
+                                        encabezado_archivo["franja"], resaltar=False, repetir_encabezado=False,
+                                    )
 
-                        _agregar_bloque(estado, documento, pagina, franja, resaltar=resaltar_filas)
+                        with cronometro.medir("copiar_filas"):
+                            _agregar_bloque(estado, documento, pagina, franja, resaltar=resaltar_filas)
         except Exception as error:
             errores_por_archivo[nombre_archivo] = f"No se pudo procesar el archivo: {error}"
         finally:
@@ -835,6 +902,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
         "no_encontrados": no_encontrados,
         "errores_por_archivo": errores_por_archivo,
         "detalle_registros": detalle_registros,
+        "tiempos": cronometro.resumen(),
     }
 
 
@@ -843,6 +911,7 @@ def resaltar_por_cedula_sin_recortar(
     registros: list[dict],
     carpeta_salida: str,
 ) -> dict:
+    cronometro = _Cronometro()
     registros_unicos, mapa_cedulas, mapa_id_a_cedula_real = _construir_mapas_cedula(registros)
 
     polizas_encontradas: dict[tuple[str, str], set] = {}
@@ -856,7 +925,8 @@ def resaltar_por_cedula_sin_recortar(
     for ruta_pdf in rutas_pdfs:
         nombre_archivo = Path(ruta_pdf).name
         try:
-            documento = fitz.open(ruta_pdf)
+            with cronometro.medir("abrir_pdf"):
+                documento = fitz.open(ruta_pdf)
         except Exception as error:
             errores_por_archivo[nombre_archivo] = f"No se pudo abrir el archivo: {error}"
             continue
@@ -870,14 +940,20 @@ def resaltar_por_cedula_sin_recortar(
 
         try:
             for pagina in documento:
-                textpage = pagina.get_textpage()
-                palabras = pagina.get_text("words", textpage=textpage)
-                y0s_cedulas_pagina = _y0s_anclas_fila(pagina, textpage=textpage)
+                cronometro.contar("paginas")
+                with cronometro.medir("extraer_texto"):
+                    textpage = pagina.get_textpage()
+                    palabras = pagina.get_text("words", textpage=textpage)
+                    y0s_cedulas_pagina = _y0s_anclas_fila(pagina, textpage=textpage)
+
+                with cronometro.medir("buscar_cedulas"):
+                    coincidencias_pagina = list(_localizar_coincidencias_de_cedula(
+                        pagina, palabras, y0s_cedulas_pagina, mapa_cedulas, mapa_id_a_cedula_real,
+                    ))
+                cronometro.contar("filas_encontradas", len(coincidencias_pagina))
 
                 franjas_ya_resaltadas: list = []
-                for franja, clientes, clave_cedula, hallado_por_numero_asegurado in _localizar_coincidencias_de_cedula(
-                    pagina, palabras, y0s_cedulas_pagina, mapa_cedulas, mapa_id_a_cedula_real,
-                ):
+                for franja, clientes, clave_cedula, hallado_por_numero_asegurado in coincidencias_pagina:
                     for cliente in clientes:
                         polizas_encontradas.setdefault((clave_cedula, cliente), set()).add(nombre_archivo)
                         if hallado_por_numero_asegurado:
@@ -889,11 +965,13 @@ def resaltar_por_cedula_sin_recortar(
                     if franja in franjas_ya_resaltadas:
                         continue
                     franjas_ya_resaltadas.append(franja)
-                    anotacion = pagina.add_highlight_annot(franja)
-                    anotacion.update()
+                    with cronometro.medir("resaltar"):
+                        anotacion = pagina.add_highlight_annot(franja)
+                        anotacion.update()
 
             ruta_salida = carpeta / f"{Path(nombre_archivo).stem}_resaltado.pdf"
-            documento.save(str(ruta_salida))
+            with cronometro.medir("guardar_disco"):
+                documento.save(str(ruta_salida))
             archivos_resaltados[nombre_archivo] = str(ruta_salida)
         except Exception as error:
             errores_por_archivo[nombre_archivo] = f"No se pudo procesar el archivo: {error}"
@@ -909,6 +987,7 @@ def resaltar_por_cedula_sin_recortar(
         "no_encontrados": no_encontrados,
         "errores_por_archivo": errores_por_archivo,
         "detalle_registros": detalle_registros,
+        "tiempos": cronometro.resumen(),
     }
 
 

@@ -73,6 +73,37 @@ def _limpiar_temporales_antiguos(segundos_vida: int = 3600) -> int:
 
 _limpiar_temporales_antiguos()  # una pasada al arrancar el proceso
 
+
+def _rss_pico_mb() -> float | None:
+    """Pico de memoria del proceso (worker de gunicorn) desde que arrancó,
+    en MB. None en Windows, donde no existe el módulo resource."""
+    try:
+        import resource
+    except ImportError:
+        return None
+    return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1)  # Linux lo da en KB
+
+
+def _sumar_tiempos(acumulado: dict, tiempos: dict) -> None:
+    """Suma el resumen de un _Cronometro (resaltado_pdf) dentro de otro."""
+    for seccion in ("segundos", "conteos"):
+        destino = acumulado.setdefault(seccion, {})
+        for clave, valor in tiempos.get(seccion, {}).items():
+            destino[clave] = round(destino.get(clave, 0) + valor, 3)
+
+
+def _registrar_tiempos(modo: str, fases: dict, tiempos_lote: dict, bytes_subidos: int, bytes_zip: int) -> None:
+    """Una sola línea en el log por lote, para leerla con journalctl:
+    fases del servidor (guardar subidas, procesar, zip) + fases internas
+    del procesamiento."""
+    app.logger.info("tiempos %s: %s", modo, json.dumps({
+        "fases_servidor": {fase: round(s, 3) for fase, s in fases.items()},
+        "procesamiento": tiempos_lote,
+        "mb_subidos": round(bytes_subidos / 1024 / 1024, 2),
+        "mb_zip": round(bytes_zip / 1024 / 1024, 2),
+        "rss_pico_proceso_mb": _rss_pico_mb(),
+    }, ensure_ascii=False))
+
 _LIMITE_SOLICITUDES_POR_IP = 10
 _VENTANA_LIMITE_SEGUNDOS = 5 * 60
 _historial_solicitudes_por_ip: dict[str, deque] = defaultdict(deque)
@@ -332,10 +363,14 @@ def _nombre_zip_sin_colision(nombre: str, nombres_usados: set) -> str:
 
 
 def _procesar_modo_simple(nombres: list[str], archivos):
-   
+
     coincidencias_por_archivo: dict[str, dict] = {}
     errores_por_archivo: dict[str, str] = {}
     nombres_zip_usados: set[str] = set()
+    fases: dict[str, float] = defaultdict(float)
+    tiempos_lote: dict = {}
+    bytes_subidos = 0
+    inicio_total = time.perf_counter()
     carpeta_temporal = Path(tempfile.mkdtemp(prefix="resaltado_simple_"))
     archivo_zip_temporal = tempfile.NamedTemporaryFile(suffix=".zip", prefix="resaltado_simple_zip_", delete=False)
     ruta_zip = Path(archivo_zip_temporal.name)
@@ -349,16 +384,24 @@ def _procesar_modo_simple(nombres: list[str], archivos):
                     errores_por_archivo[nombre_archivo] = "No es un archivo PDF."
                     continue
                 ruta_entrada = carpeta_temporal / f"{i}_{nombre_archivo}"
+                inicio = time.perf_counter()
                 archivo.save(ruta_entrada)
+                fases["guardar_subidas"] += time.perf_counter() - inicio
+                bytes_subidos += ruta_entrada.stat().st_size
 
                 nombre_salida = f"{Path(nombre_archivo).stem}_resaltado.pdf"
                 ruta_salida = carpeta_temporal / f"{i}_{nombre_salida}"
 
                 try:
+                    inicio = time.perf_counter()
                     resultado = resaltar_nombres_en_pdf(str(ruta_entrada), nombres, str(ruta_salida))
+                    fases["procesar"] += time.perf_counter() - inicio
+                    _sumar_tiempos(tiempos_lote, resultado.tiempos)
                     arcname = _nombre_zip_sin_colision(nombre_salida, nombres_zip_usados)
                     coincidencias_por_archivo[arcname] = resultado.coincidencias_por_nombre
+                    inicio = time.perf_counter()
                     zf.write(ruta_salida, arcname=arcname)
+                    fases["zip"] += time.perf_counter() - inicio
                 except Exception as error:
                     app.logger.warning("Fallo procesando %s: %s", nombre_archivo, error)
                     errores_por_archivo[nombre_archivo] = str(error)
@@ -390,6 +433,9 @@ def _procesar_modo_simple(nombres: list[str], archivos):
         "modo simple: %d/%d archivos OK, %d coincidencia(s)",
         total_archivos_ok, total_archivos_ok + total_errores, total_coincidencias,
     )
+    fases["total"] = time.perf_counter() - inicio_total
+    tiempos_lote.setdefault("conteos", {})["nombres"] = len(nombres)
+    _registrar_tiempos("simple", fases, tiempos_lote, bytes_subidos, ruta_zip.stat().st_size)
 
     @after_this_request
     def _borrar_zip_temporal(response):
@@ -417,6 +463,8 @@ _LIMITE_BYTES_NO_ENCONTRADOS_HEADER = 4000
 def _procesar_modo_cliente(
     registros: list[dict], archivos, formato: str, resaltar_filas: bool = True, solo_resaltar: bool = False,
 ):
+    fases: dict[str, float] = {}
+    inicio_total = time.perf_counter()
     carpeta_temporal = Path(tempfile.mkdtemp(prefix="resaltado_cliente_"))
     carpeta_entrada = carpeta_temporal / "entrada"
     carpeta_entrada.mkdir(parents=True, exist_ok=True)
@@ -425,6 +473,8 @@ def _procesar_modo_cliente(
     try:
         rutas_entrada = []
         pdfs_invalidos = []
+        bytes_subidos = 0
+        inicio = time.perf_counter()
         for i, archivo in enumerate(archivos):
             nombre_archivo = Path(archivo.filename).name
             if not nombre_archivo.lower().endswith(".pdf"):
@@ -434,11 +484,14 @@ def _procesar_modo_cliente(
             ruta = carpeta_entrada / f"{i}_{nombre_archivo}"
             archivo.save(ruta)
             rutas_entrada.append(str(ruta))
+            bytes_subidos += ruta.stat().st_size
             _guardar_copia_debug(ruta, nombre_archivo)
+        fases["guardar_subidas"] = time.perf_counter() - inicio
 
         if not rutas_entrada:
             return jsonify(error="Ninguno de los archivos subidos es un PDF válido."), 400
 
+        inicio = time.perf_counter()
         try:
             if solo_resaltar:
                 resultado = resaltar_por_cedula_sin_recortar(rutas_entrada, registros, str(carpeta_salida))
@@ -451,6 +504,7 @@ def _procesar_modo_cliente(
         except Exception as error:
             app.logger.error("modo cliente: no se pudo procesar el lote: %s", error)
             return jsonify(error=f"No se pudieron procesar los PDFs: {error}"), 500
+        fases["procesar"] = time.perf_counter() - inicio
 
         no_encontrados = [
             f"{r['nombre'] or 'sin nombre'} (cédula {r['cedula']}, cliente {r['cliente']})"
@@ -469,8 +523,11 @@ def _procesar_modo_cliente(
         archivo_zip_temporal.close()
 
         with zipfile.ZipFile(ruta_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+            inicio = time.perf_counter()
             for _clave, ruta_pdf in sorted(archivos_generados.items()):
                 zf.write(ruta_pdf, arcname=Path(ruta_pdf).name)
+            fases["zip"] = time.perf_counter() - inicio
+            inicio = time.perf_counter()
             if no_encontrados or errores_archivos:
                 resumen_pdf = generar_pdf_resumen(
                     "Resumen del procesamiento",
@@ -483,6 +540,7 @@ def _procesar_modo_cliente(
 
             resumen_excel = generar_excel_resumen(resultado["detalle_registros"])
             zf.writestr("Resumen_Facturacion.xlsx", resumen_excel)
+            fases["resumenes"] = time.perf_counter() - inicio
     finally:
         shutil.rmtree(carpeta_temporal, ignore_errors=True)
 
@@ -490,6 +548,15 @@ def _procesar_modo_cliente(
     app.logger.info(
         "modo cliente (solo_resaltar=%s): %d PDF(s) generados, %d error(es), %d cédula(s) no encontradas",
         solo_resaltar, total_archivos_generados, len(errores_archivos), len(no_encontrados),
+    )
+    fases["total"] = time.perf_counter() - inicio_total
+    tiempos_lote = resultado.get("tiempos", {})
+    tiempos_lote.setdefault("conteos", {}).update(
+        pdfs=len(rutas_entrada), registros=len(registros), pdfs_generados=total_archivos_generados,
+    )
+    _registrar_tiempos(
+        "cliente_sin_recorte" if solo_resaltar else "cliente",
+        fases, tiempos_lote, bytes_subidos, ruta_zip.stat().st_size,
     )
 
     @after_this_request

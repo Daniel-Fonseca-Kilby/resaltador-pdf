@@ -1001,3 +1001,22 @@ def test_solo_resaltar_pdf_con_contrasena_se_reporta_como_error_sin_tumbar_el_pr
     assert "protegido.pdf" in resultado["errores_por_archivo"]
     assert resultado["archivos_resaltados"] == {}
 
+
+
+def test_por_cliente_reporta_tiempos_por_fase(ruta_pdf_ejemplo, registros_ejemplo, tmp_path):
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        [ruta_pdf_ejemplo], registros_ejemplo, str(tmp_path / "salida"), formato="mnk"
+    )
+    tiempos = resultado["tiempos"]
+    assert tiempos["conteos"]["paginas"] == 1
+    assert tiempos["conteos"]["filas_encontradas"] > 0
+    for fase in ("abrir_pdf", "extraer_texto", "buscar_cedulas", "copiar_filas", "guardar_pdf_cliente"):
+        assert fase in tiempos["segundos"]
+
+
+def test_sin_recortar_reporta_tiempos_por_fase(ruta_pdf_ejemplo, registros_ejemplo, tmp_path):
+    resultado = resaltar_por_cedula_sin_recortar(
+        [ruta_pdf_ejemplo], registros_ejemplo, str(tmp_path / "salida")
+    )
+    assert resultado["tiempos"]["conteos"]["paginas"] == 1
+    assert "guardar_disco" in resultado["tiempos"]["segundos"]

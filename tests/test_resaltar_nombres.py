@@ -29,3 +29,11 @@ def test_varios_nombres_a_la_vez(ruta_pdf_ejemplo, tmp_path):
     assert resultado.coincidencias_por_nombre["JUAN"] > 0
     assert resultado.coincidencias_por_nombre["ZUNIGA"] > 0
     assert resultado.coincidencias_por_nombre["NO EXISTE"] == 0
+
+
+def test_reporta_tiempos_por_fase(ruta_pdf_ejemplo, tmp_path):
+    salida = tmp_path / "salida.pdf"
+    resultado = resaltar_nombres_en_pdf(ruta_pdf_ejemplo, ["JUAN"], str(salida))
+    assert resultado.tiempos["conteos"]["paginas"] == 1
+    assert "extraer_texto" in resultado.tiempos["segundos"]
+    assert "guardar_disco" in resultado.tiempos["segundos"]
