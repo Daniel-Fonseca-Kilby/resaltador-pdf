@@ -1076,3 +1076,42 @@ def test_compactar_pdf_mantiene_logo_y_pie_en_cada_pagina(tmp_path):
     assert despues_por_pagina == antes_por_pagina == [1, 1, 1]  # el logo sigue en cada página
     assert len(despues_xrefs) == 1  # pero guardado una sola vez
     assert despues_render == antes_render  # y se ve idéntico
+
+
+def test_compactar_pdf_une_logos_identicos_con_distinto_name(tmp_path):
+    """Caso real de MNK: la planilla trae el mismo logo 3 veces, idéntico
+    salvo por /Name (im1, im2, im3). Compactar debe dejar una sola copia y
+    que cada página se siga viendo igual."""
+    from resaltado_pdf import _compactar_pdf
+
+    logo = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 60, 60), False)
+    logo.set_rect(logo.irect, (20, 60, 180))
+    png_logo = logo.tobytes("png")
+
+    ruta = tmp_path / "planilla_mnk.pdf"
+    for _ in range(3):
+        documento = fitz.open(str(ruta)) if ruta.exists() else fitz.open()
+        pagina = documento.new_page(width=595, height=842)
+        pagina.insert_image(fitz.Rect(36, 20, 96, 80), stream=png_logo)
+        if ruta.exists():
+            documento.save(str(ruta), incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
+        else:
+            documento.save(str(ruta))
+        documento.close()
+
+    documento = fitz.open(str(ruta))
+    xrefs = sorted({img[0] for p in documento for img in p.get_images()})
+    for numero, xref in enumerate(xrefs, start=1):
+        documento.xref_set_key(xref, "Name", f"/im{numero}")
+    documento.save(str(ruta), incremental=True, encryption=fitz.PDF_ENCRYPT_KEEP)
+    antes_render = [p.get_pixmap().samples for p in documento]
+    documento.close()
+    assert len(xrefs) == 3
+
+    _compactar_pdf(ruta)
+
+    documento = fitz.open(str(ruta))
+    assert [len(p.get_images()) for p in documento] == [1, 1, 1]
+    assert len({img[0] for p in documento for img in p.get_images()}) == 1
+    assert [p.get_pixmap().samples for p in documento] == antes_render
+    documento.close()

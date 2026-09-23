@@ -439,6 +439,16 @@ def _compactar_pdf(ruta: Path) -> None:
     try:
         documento = fitz.open(str(ruta))
         try:
+            # las planillas de MNK traen el mismo logo 3 veces, idéntico
+            # salvo por /Name (im1, im2, im3) -eso basta para que garbage=4
+            # no las considere iguales. /Name en imágenes es obsoleto desde
+            # PDF 1.1 y ningún visor lo usa, se puede quitar sin riesgo.
+            for xref in range(1, documento.xref_length()):
+                if (
+                    documento.xref_get_key(xref, "Subtype")[1] == "/Image"
+                    and documento.xref_get_key(xref, "Name")[0] != "null"
+                ):
+                    documento.xref_set_key(xref, "Name", "null")
             documento.save(
                 str(temporal), garbage=4, deflate=True, deflate_images=True, deflate_fonts=True,
             )
