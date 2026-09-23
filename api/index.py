@@ -11,10 +11,12 @@ import os
 import shutil
 import sys
 import tempfile
+import threading
 import time
 import unicodedata
 import zipfile
 from collections import defaultdict, deque
+from contextlib import contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -104,9 +106,32 @@ def _registrar_tiempos(modo: str, fases: dict, tiempos_lote: dict, bytes_subidos
         "rss_pico_proceso_mb": _rss_pico_mb(),
     }, ensure_ascii=False))
 
-_LIMITE_SOLICITUDES_POR_IP = 10
+# solo cuenta /api/procesar (lo pesado). Toda la oficina de VMA sale a
+# internet por la misma IP (Fortinet), así que el límite es para el
+# grupo completo, no por persona -por eso 30 y no 10. La vista previa
+# (/api/detectar-modo-excel) no cuenta: se dispara cada vez que alguien
+# elige un Excel y solo lee la hoja con openpyxl.
+_RUTAS_CON_LIMITE = ("/api/procesar",)
+_LIMITE_SOLICITUDES_POR_IP = 30
 _VENTANA_LIMITE_SEGUNDOS = 5 * 60
 _historial_solicitudes_por_ip: dict[str, deque] = defaultdict(deque)
+
+# PyMuPDF no soporta usarse desde varios hilos a la vez. Gunicorn corre con
+# varios hilos por worker para que la página y la vista previa respondan
+# mientras un lote se procesa; este candado deja que solo un lote por
+# worker toque PyMuPDF a la vez (el paralelismo real lo dan los workers,
+# que son procesos separados).
+_candado_pymupdf = threading.Lock()
+
+
+@contextmanager
+def _turno_pymupdf():
+    inicio = time.perf_counter()
+    with _candado_pymupdf:
+        espera = time.perf_counter() - inicio
+        if espera > 0.5:
+            app.logger.info("el lote esperó %.1f s a que terminara otro en este worker", espera)
+        yield
 
 
 def _ip_supero_el_limite(ip: str) -> bool:
@@ -122,7 +147,7 @@ def _ip_supero_el_limite(ip: str) -> bool:
 
 @app.before_request
 def _limitar_solicitudes_api():
-    if not request.path.startswith("/api/"):
+    if request.path not in _RUTAS_CON_LIMITE:
         return None
     ip = request.remote_addr or "desconocida"
     if _ip_supero_el_limite(ip):
@@ -615,9 +640,10 @@ def procesar():
             resaltar_filas = resaltar_param in ("true", "1", "on", "yes")
             solo_resaltar_param = request.form.get("solo_resaltar", "false").strip().lower()
             solo_resaltar = solo_resaltar_param in ("true", "1", "on", "yes")
-            return _procesar_modo_cliente(
-                registros, archivos, formato, resaltar_filas=resaltar_filas, solo_resaltar=solo_resaltar,
-            )
+            with _turno_pymupdf():
+                return _procesar_modo_cliente(
+                    registros, archivos, formato, resaltar_filas=resaltar_filas, solo_resaltar=solo_resaltar,
+                )
 
         texto_nombres = request.form.get("nombres", "").strip()
         nombres = _combinar_nombres(texto_nombres, archivo_excel)
@@ -628,6 +654,7 @@ def procesar():
     if not nombres:
         return jsonify(error="Escriba al menos un nombre o suba un Excel con la lista de nombres."), 400
 
-    return _procesar_modo_simple(nombres, archivos)
+    with _turno_pymupdf():
+        return _procesar_modo_simple(nombres, archivos)
 if __name__ == "__main__":
     app.run(debug=True)

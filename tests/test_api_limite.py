@@ -4,7 +4,7 @@ import api.index as api_index
 _cliente = api_index.app.test_client()
 
 
-def _post(ip: str, ruta: str = "/api/detectar-modo-excel"):
+def _post(ip: str, ruta: str = "/api/procesar"):
     return _cliente.post(ruta, environ_base={"REMOTE_ADDR": ip})
 
 
@@ -65,3 +65,28 @@ def test_el_limite_no_afecta_la_pagina_principal():
     respuesta = _get("10.0.0.6")
 
     assert respuesta.status_code == 200
+
+
+def test_la_vista_previa_del_excel_no_cuenta_para_el_limite():
+    """Toda la oficina sale por la misma IP y la vista previa se dispara
+    cada vez que alguien elige un Excel -no debe gastar el cupo."""
+    for _ in range(api_index._LIMITE_SOLICITUDES_POR_IP + 5):
+        assert _post("10.0.0.7", "/api/detectar-modo-excel").status_code != 429
+
+    assert _post("10.0.0.7").status_code != 429
+
+
+def test_el_candado_de_pymupdf_queda_libre_despues_de_procesar():
+    """Si una solicitud falla a mitad del procesamiento, el candado no
+    puede quedar tomado (bloquearía el worker para siempre)."""
+    import io
+
+    respuesta = _cliente.post(
+        "/api/procesar",
+        data={"nombres": "JUAN PEREZ", "pdfs": (io.BytesIO(b"esto no es un pdf"), "roto.pdf")},
+        content_type="multipart/form-data",
+        environ_base={"REMOTE_ADDR": "10.0.0.8"},
+    )
+    assert respuesta.status_code == 200  # el PDF roto se reporta en el resumen, no tumba el lote
+    assert api_index._candado_pymupdf.acquire(blocking=False)
+    api_index._candado_pymupdf.release()

@@ -10,7 +10,16 @@ WorkingDirectory=/opt/resaltador-pdf
 # firewall corporativo de VMA (Fortinet) bloquea sslip.io por categoria
 # "Dynamic DNS". Retomar con "--bind 127.0.0.1:8000" (ver historial de
 # este archivo) apenas VMA tenga un dominio propio.
-ExecStart=/opt/resaltador-pdf/venv/bin/gunicorn api.index:app --bind 0.0.0.0:8000 --workers 1 --threads 1 --timeout 600 --max-requests 50 --max-requests-jitter 10
+#
+# 2 workers (procesos) x 4 hilos: hasta 2 lotes en paralelo (uno por vCPU)
+# y, mientras tanto, los otros hilos siguen sirviendo la página y la
+# vista previa del Excel. PyMuPDF no es seguro entre hilos -api/index.py
+# lo protege con un candado por worker (_turno_pymupdf). Memoria medida:
+# ~535 MB de pico por lote grande, 2 a la vez caben en los 4 GB.
+#
+# OJO: en el servidor este servicio está instalado como
+# /etc/systemd/system/resaltador-pds.service (con "s"), no con este nombre.
+ExecStart=/opt/resaltador-pdf/venv/bin/gunicorn api.index:app --bind 0.0.0.0:8000 --workers 2 --threads 4 --timeout 600 --max-requests 50 --max-requests-jitter 10
 Restart=always
 RestartSec=5
 
