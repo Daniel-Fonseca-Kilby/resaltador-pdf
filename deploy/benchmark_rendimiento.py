@@ -1,26 +1,3 @@
-"""
-Benchmark de rendimiento del resaltador (fase 0 del plan de rendimiento).
-
-Mide cuánto tarda cada fase del procesamiento (el mismo desglose que queda
-en el log del servidor como "tiempos <modo>: {...}") y cuánta memoria usa
-cada modo, para decidir qué optimizar con números y no a ojo.
-
-Cada modo corre en un proceso aparte, así el pico de memoria de uno no
-contamina al siguiente.
-
-Uso, en el servidor (idealmente cuando nadie esté usando la herramienta,
-el benchmark compite por los mismos 2 vCPU):
-
-    cd /opt/resaltador-pdf
-    venv/bin/python deploy/benchmark_rendimiento.py
-    venv/bin/python deploy/benchmark_rendimiento.py --pdfs 20 --paginas 30 --clientes 80
-    venv/bin/python deploy/benchmark_rendimiento.py --reales /ruta/a/pdfs --excel /ruta/a/lista.xlsx
-    venv/bin/python deploy/benchmark_rendimiento.py --modos cliente --perfil
-
-Sin --reales se genera un corpus sintético estilo MNK (encabezado,
-filas con cédula, renglón de total y leyenda "CODIFICACIÓN" en la última
-página) con cédulas y nombres inventados.
-"""
 
 import argparse
 import cProfile

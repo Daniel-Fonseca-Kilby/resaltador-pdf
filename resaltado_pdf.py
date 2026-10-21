@@ -518,20 +518,29 @@ def _localizar_coincidencias_de_cedula(pagina, palabras: list, y0s_cedulas_pagin
         clave_cedula = mapa_id_a_cedula_real.get(clave_cedula_hallada, clave_cedula_hallada)
         hallado_por_numero_asegurado = clave_cedula != clave_cedula_hallada
 
-        fila_y0 = min(w[1] for w in palabras if abs(w[1] - y0) <= _TOLERANCIA_FILA)
-        fila_y1 = max(w[3] for w in palabras if abs(w[1] - y0) <= _TOLERANCIA_FILA)
-
-        limite_superior, limite_inferior = _limites_fila_por_anclas_vecinas(y0, y0s_cedulas_pagina)
-        if limite_superior is not None:
-            fila_y0 = max(fila_y0, limite_superior)
-        if limite_inferior is not None:
-            fila_y1 = min(fila_y1, limite_inferior)
-        else:
-            fila_y1 = min(fila_y1, fila_y0 + _ALTURA_MAXIMA_FILA_SIN_VECINA)
-
-        franja = fitz.Rect(pagina.rect.x0, fila_y0 - 2, pagina.rect.x1, fila_y1 + 2)
+        franja = _franja_de_fila(pagina, palabras, y0, y0s_cedulas_pagina)
 
         yield franja, clientes, clave_cedula, hallado_por_numero_asegurado
+
+
+def _franja_de_fila(pagina, palabras: list, y0: float, y0s_anclas_pagina: list[float]) -> "fitz.Rect":
+    """Franja de ancho completo del renglón que arranca en y0: todas las
+    palabras de esa misma altura, recortada a medio camino de las filas
+    vecinas (para no comerse media fila de arriba o de abajo cuando el
+    renglón ocupa dos líneas)."""
+    misma_fila = [w for w in palabras if abs(w[1] - y0) <= _TOLERANCIA_FILA]
+    fila_y0 = min((w[1] for w in misma_fila), default=y0)
+    fila_y1 = max((w[3] for w in misma_fila), default=y0 + 10)
+
+    limite_superior, limite_inferior = _limites_fila_por_anclas_vecinas(y0, y0s_anclas_pagina)
+    if limite_superior is not None:
+        fila_y0 = max(fila_y0, limite_superior)
+    if limite_inferior is not None:
+        fila_y1 = min(fila_y1, limite_inferior)
+    else:
+        fila_y1 = min(fila_y1, fila_y0 + _ALTURA_MAXIMA_FILA_SIN_VECINA)
+
+    return fitz.Rect(pagina.rect.x0, fila_y0 - 2, pagina.rect.x1, fila_y1 + 2)
 
 
 def _construir_detalle_registros(
@@ -569,9 +578,20 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     carpeta_salida: str,
     formato: str = "auto",
     resaltar_filas: bool = True,
+    localizar=None,
 ) -> dict:
+    """localizar: opcional, para recortar por otro criterio que no sea la
+    cédula del Excel (ver resaltar_nombres_y_recortar). Recibe
+    (pagina, palabras, y0s_anclas_fila, textpage) y devuelve tuplas
+    (franja, grupos, clave, hallado_por_numero_asegurado) -cada grupo es
+    un PDF de salida."""
     cronometro = _Cronometro()
     registros_unicos, mapa_cedulas, mapa_id_a_cedula_real = _construir_mapas_cedula(registros)
+    if localizar is None:
+        def localizar(pagina, palabras, y0s_anclas, _textpage):
+            return _localizar_coincidencias_de_cedula(
+                pagina, palabras, y0s_anclas, mapa_cedulas, mapa_id_a_cedula_real,
+            )
 
     estado_por_cliente: dict[str, dict] = {}
     polizas_encontradas: dict[tuple[str, str], set] = {}
@@ -863,9 +883,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                     y0s_cedulas_pagina = _y0s_anclas_fila(pagina, textpage=textpage)
 
                 with cronometro.medir("buscar_cedulas"):
-                    coincidencias_pagina = list(_localizar_coincidencias_de_cedula(
-                        pagina, palabras, y0s_cedulas_pagina, mapa_cedulas, mapa_id_a_cedula_real,
-                    ))
+                    coincidencias_pagina = list(localizar(pagina, palabras, y0s_cedulas_pagina, textpage))
                 cronometro.contar("filas_encontradas", len(coincidencias_pagina))
 
                 franjas_vistas: dict[str, list] = {}
@@ -939,6 +957,83 @@ def resaltar_por_cedula_y_exportar_por_cliente(
         "errores_por_archivo": errores_por_archivo,
         "detalle_registros": detalle_registros,
         "tiempos": cronometro.resumen(),
+    }
+
+
+_GRUPO_MODO_NOMBRE = "Nombres encontrados"
+
+
+def _se_solapan(a: "fitz.Rect", b: "fitz.Rect") -> bool:
+    """Dos franjas son el mismo renglón si comparten más de la mitad del alto."""
+    alto_comun = min(a.y1, b.y1) - max(a.y0, b.y0)
+    return alto_comun > 0.5 * min(a.height, b.height)
+
+
+def _localizar_filas_de_nombres(pagina, palabras, y0s_anclas, textpage, nombres, conteo_por_archivo):
+    """Franja del renglón de cada coincidencia de los nombres buscados, con
+    el mismo criterio de búsqueda que resaltar_nombres_en_pdf (variantes de
+    la Ñ, nombre y apellido en columnas distintas). Si dos nombres caen en
+    el mismo renglón, el renglón sale una sola vez."""
+    conteo = conteo_por_archivo.setdefault(Path(pagina.parent.name).name, {n: 0 for n in nombres})
+    texto_pagina_norm = _normalizar(pagina.get_text(textpage=textpage))
+
+    franjas_pagina: list = []
+    for nombre in nombres:
+        palabras_nombre = [p for p in nombre.split() if len(p) >= 3]
+        if not _puede_aparecer_en_pagina(texto_pagina_norm, nombre, palabras_nombre):
+            continue
+        rects = _buscar_con_variantes(pagina, nombre, textpage=textpage)
+        if rects:
+            y0s = [r.y0 for r in rects]
+        else:
+            y0s = [min(r.y0 for r in fila) for fila in _buscar_por_fila(pagina, palabras_nombre, textpage=textpage)]
+
+        franjas_nombre: list = []
+        for y0 in y0s:
+            franja = _franja_de_fila(pagina, palabras, y0, y0s_anclas)
+            if any(_se_solapan(franja, f) for f in franjas_nombre):
+                continue  # el mismo nombre dos veces en el mismo renglón cuenta una
+            franjas_nombre.append(franja)
+            conteo[nombre] += 1
+            if not any(_se_solapan(franja, f) for f, _n in franjas_pagina):
+                franjas_pagina.append((franja, nombre))
+
+    franjas_pagina.sort(key=lambda par: par[0].y0)  # en el orden de la planilla
+    for franja, nombre in franjas_pagina:
+        yield franja, [_GRUPO_MODO_NOMBRE], nombre, False
+
+
+def resaltar_nombres_y_recortar(
+    rutas_pdfs: list[str],
+    nombres: list[str],
+    carpeta_salida: str,
+    formato: str = "auto",
+    resaltar_filas: bool = True,
+) -> dict:
+    """Modo por nombre con recorte: un solo PDF con el encabezado de cada
+    planilla, solo los renglones donde aparece alguno de los nombres, y el
+    pie de cada póliza -el mismo armado que el PDF por cliente."""
+    nombres = [n.strip() for n in nombres if n.strip()]
+    conteo_por_archivo: dict[str, dict[str, int]] = {}
+
+    def localizar(pagina, palabras, y0s_anclas, textpage):
+        return _localizar_filas_de_nombres(pagina, palabras, y0s_anclas, textpage, nombres, conteo_por_archivo)
+
+    resultado = resaltar_por_cedula_y_exportar_por_cliente(
+        rutas_pdfs, [], carpeta_salida, formato, resaltar_filas=resaltar_filas, localizar=localizar,
+    )
+
+    # las planillas donde no apareció nadie también van en el resumen, en cero
+    for ruta in rutas_pdfs:
+        nombre_archivo = Path(ruta).name
+        if nombre_archivo not in resultado["errores_por_archivo"]:
+            conteo_por_archivo.setdefault(nombre_archivo, {n: 0 for n in nombres})
+
+    return {
+        "ruta_pdf": resultado["archivos_por_cliente"].get(_GRUPO_MODO_NOMBRE),
+        "coincidencias_por_archivo": conteo_por_archivo,
+        "errores_por_archivo": resultado["errores_por_archivo"],
+        "tiempos": resultado["tiempos"],
     }
 
 

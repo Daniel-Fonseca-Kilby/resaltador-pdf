@@ -780,7 +780,7 @@
     <div class="panel">
       <div class="campo">
         <label for="nombres">Nombres a resaltar</label>
-        <p class="hint">Sepárelos por coma, suba un Excel con la lista, o ambos a la vez (Ej: Juan Pérez, María López).</p>
+        <p class="hint">Sepárelos por coma, suba un Excel con la lista, o ambos a la vez (Ej: Juan Pérez, María López). Se genera un solo PDF con únicamente los renglones donde aparecen, de todas las planillas.</p>
         <input type="text" id="nombres" placeholder="Juan Pérez, María López">
       </div>
 
@@ -836,7 +836,7 @@
 
       <div class="campo">
         <label for="formato">Tipo de planilla</label>
-        <p class="hint">Solo aplica cuando se filtra por Identificación y Cliente: ayuda a ubicar mejor el encabezado de cada página en el PDF fusionado por cliente.</p>
+        <p class="hint">Ayuda a ubicar mejor el encabezado y el pie de cada planilla en los PDFs recortados (por cliente o por nombre).</p>
         <select id="formato">
           <option value="auto">Automático (otro formato)</option>
           <option value="ccss">CCSS - Planilla mensual</option>
@@ -851,17 +851,17 @@
           <span class="texto-checkbox">Resaltar filas con franja amarilla</span>
         </label>
         <p class="hint" id="hintResaltar">
-          Solo aplica al PDF fusionado por cliente. Si lo desmarca, el PDF se genera con las filas recortadas en su apariencia original, sin marcas amarillas encima (ideal para trámites formales ante clientes o auditorías).
+          Aplica a los PDFs recortados (por cliente o por nombre). Si lo desmarca, el PDF se genera con las filas recortadas en su apariencia original, sin marcas amarillas encima (ideal para trámites formales ante clientes o auditorías).
         </p>
       </div>
 
       <div class="campo">
         <label class="contenedor-checkbox">
           <input type="checkbox" id="chkSoloResaltar">
-          <span class="texto-checkbox">Solo resaltar, sin recortar ni separar por cliente</span>
+          <span class="texto-checkbox">Solo resaltar, sin recortar</span>
         </label>
         <p class="hint">
-          Solo aplica cuando se filtra por Identificación y Cliente. Si lo marca, cada PDF de entrada se entrega completo e intacto (todas sus páginas, tal cual venía), solo con las filas de los oficiales de cada cliente resaltadas en amarillo -en vez de generar un PDF nuevo fusionado y recortado por cliente. Al activarlo, "Tipo de planilla" y "Resaltar filas" dejan de aplicar (el resaltado siempre queda encendido, porque es lo único que hace este modo).
+          Si lo marca, cada PDF de entrada se entrega completo e intacto (todas sus páginas, tal cual venía), solo con los nombres buscados o las filas de los oficiales de cada cliente resaltados en amarillo -en vez de generar un PDF nuevo recortado (uno por cliente, o uno solo con todos los nombres buscados). Al activarlo, "Tipo de planilla" y "Resaltar filas" dejan de aplicar (el resaltado siempre queda encendido, porque es lo único que hace este modo).
         </p>
       </div>
 
@@ -925,28 +925,28 @@
 // cerrado el anterior. Los números tienen que salir de mediciones reales
 // (ver "tiempos" en el log del servidor y deploy/benchmark_rendimiento.py).
 const NOVEDADES = {
-  version: "2026-09-23-rendimiento",
-  fecha: "23 de septiembre de 2026",
-  titulo: "Mejora en el funcionamiento por optimización de código",
+  version: "2026-10-21-recorte-por-nombre",
+  fecha: "21 de octubre de 2026",
+  titulo: "Nuevo: recorte por nombre",
   puntos: [
     {
-      destacado: "Hasta 4,6 veces más rápido.",
-      texto: "Un lote grande de planillas pasó de 125 segundos a 27 segundos.",
+      destacado: "Al buscar por nombre, ahora también se recorta.",
+      texto: "En vez de devolver cada planilla completa, se genera un solo PDF (Nombres_encontrados.pdf) con únicamente los renglones donde aparecen los nombres buscados, de todas las planillas subidas, con su encabezado y su pie de póliza.",
     },
     {
-      destacado: "Descargas 64 % más livianas.",
-      texto: "El resultado del modo por cliente bajó de 93 MB a 33 MB, con los mismos PDFs y la misma calidad.",
+      destacado: "El resumen dice quién no apareció.",
+      texto: "Resumen_Modo_Simple.pdf lista los nombres que no están en ninguna planilla y cuántos renglones se encontraron en cada archivo.",
     },
     {
-      destacado: "La página ya no se congela mientras se procesa.",
-      texto: "Se puede seguir usando durante un lote, y hasta dos lotes se procesan al mismo tiempo.",
+      destacado: "¿Necesita la planilla completa?",
+      texto: "Marque \"Solo resaltar, sin recortar\" y se entrega cada PDF entero, solo con los nombres resaltados, como antes.",
     },
     {
-      destacado: "Menos avisos de \"demasiadas solicitudes\".",
-      texto: "Elegir un Excel ya no cuenta para el límite, y el límite de lotes seguidos es 3 veces mayor.",
+      destacado: "Sigue vigente la mejora de rendimiento de septiembre:",
+      texto: "hasta 4,6 veces más rápido, descargas 64 % más livianas y la página ya no se congela mientras procesa.",
     },
   ],
-  nota: "Resultados medidos en pruebas con volumen de datos productivos (10 planillas, 196 páginas, 3.400 cédulas).",
+  nota: "\"Tipo de planilla\" y \"Resaltar filas con franja amarilla\" ahora también aplican al buscar por nombre.",
 };
 
 (function () {
@@ -1299,12 +1299,14 @@ configurarDropzone(dropzoneExcel, (archivos) => {
 
 configurarDropzone(dropzonePdfs, (archivos) => agregarPdfs(archivos));
 
-function mostrarResultadoSimpleResumen(totalArchivos, totalErrores, totalCoincidencias) {
+function mostrarResultadoSimpleResumen(totalArchivos, totalErrores, totalCoincidencias, recortado) {
   limpiarResultado();
   const hayProblemas = totalErrores > 0;
   resultado.appendChild(nodoConIcono(
     hayProblemas ? ICONS.alerta : ICONS.check,
-    `Se resaltaron ${totalCoincidencias} coincidencia(s) en ${totalArchivos} archivo(s)`,
+    recortado
+      ? `Se recortaron ${totalCoincidencias} renglón(es) de ${totalArchivos} archivo(s), todos en Nombres_encontrados.pdf`
+      : `Se resaltaron ${totalCoincidencias} coincidencia(s) en ${totalArchivos} archivo(s)`,
     `resultado-resumen ${hayProblemas ? "advertencia" : "exito"}`
   ));
 
@@ -1562,7 +1564,7 @@ btn.addEventListener("click", async () => {
       const totalErrores = Number(respuesta.headers.get("X-Total-Errores") || 0);
       const totalCoincidencias = Number(respuesta.headers.get("X-Total-Coincidencias") || 0);
       console.log(`[resaltador] listo: modo=simple, ${totalArchivos} archivo(s), ${totalCoincidencias} coincidencia(s), ${totalErrores} error(es)`);
-      mostrarResultadoSimpleResumen(totalArchivos, totalErrores, totalCoincidencias);
+      mostrarResultadoSimpleResumen(totalArchivos, totalErrores, totalCoincidencias, modo === "simple_recortado");
     }
 
     // el zip llega directo en el cuerpo de la respuesta, sin JSON ni base64 de por medio

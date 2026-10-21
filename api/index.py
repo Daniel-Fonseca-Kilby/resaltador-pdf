@@ -29,6 +29,7 @@ from resaltado_pdf import (
     generar_excel_resumen,
     generar_pdf_resumen,
     resaltar_nombres_en_pdf,
+    resaltar_nombres_y_recortar,
     resaltar_por_cedula_sin_recortar,
     resaltar_por_cedula_y_exportar_por_cliente,
 )
@@ -480,6 +481,120 @@ def _procesar_modo_simple(nombres: list[str], archivos):
     return respuesta
 
 
+def _procesar_modo_simple_recortado(nombres: list[str], archivos, formato: str, resaltar_filas: bool):
+    """Modo por nombre con recorte: un solo PDF con los renglones donde
+    aparece cada nombre (de todas las planillas), con su encabezado y su
+    pie de póliza -ver resaltar_nombres_y_recortar. Con "Solo resaltar"
+    marcado se usa _procesar_modo_simple (el PDF completo, solo resaltado)."""
+    errores_por_archivo: dict[str, str] = {}
+    fases: dict[str, float] = {}
+    bytes_subidos = 0
+    inicio_total = time.perf_counter()
+    carpeta_temporal = Path(tempfile.mkdtemp(prefix="resaltado_simple_"))
+    carpeta_entrada = carpeta_temporal / "entrada"
+    carpeta_entrada.mkdir(parents=True, exist_ok=True)
+
+    try:
+        rutas_entrada = []
+        # "3_planilla.pdf" -> "planilla.pdf" (o "planilla (1).pdf" si se
+        # subieron dos con el mismo nombre, para que no se pisen en el resumen)
+        nombre_original: dict[str, str] = {}
+        nombres_vistos: set[str] = set()
+        inicio = time.perf_counter()
+        for i, archivo in enumerate(archivos):
+            nombre_archivo = Path(archivo.filename).name
+            if not nombre_archivo.lower().endswith(".pdf"):
+                errores_por_archivo[nombre_archivo] = "No es un archivo PDF."
+                continue
+            ruta = carpeta_entrada / f"{i}_{nombre_archivo}"
+            archivo.save(ruta)
+            rutas_entrada.append(str(ruta))
+            nombre_original[ruta.name] = _nombre_zip_sin_colision(nombre_archivo, nombres_vistos)
+            bytes_subidos += ruta.stat().st_size
+        fases["guardar_subidas"] = time.perf_counter() - inicio
+
+        if not rutas_entrada:
+            return jsonify(error="Ninguno de los archivos subidos es un PDF válido."), 400
+
+        inicio = time.perf_counter()
+        resultado = resaltar_nombres_y_recortar(
+            rutas_entrada, nombres, str(carpeta_temporal / "salida"), formato, resaltar_filas=resaltar_filas,
+        )
+        fases["procesar"] = time.perf_counter() - inicio
+
+        for archivo, mensaje in resultado["errores_por_archivo"].items():
+            errores_por_archivo[nombre_original.get(archivo, archivo)] = mensaje
+        coincidencias_por_archivo = {
+            nombre_original.get(archivo, archivo): conteo
+            for archivo, conteo in resultado["coincidencias_por_archivo"].items()
+        }
+
+        archivo_zip_temporal = tempfile.NamedTemporaryFile(
+            suffix=".zip", prefix="resaltado_simple_zip_", delete=False
+        )
+        ruta_zip = Path(archivo_zip_temporal.name)
+        archivo_zip_temporal.close()
+
+        inicio = time.perf_counter()
+        # compresslevel=1: el PDF ya sale compactado (ver _procesar_modo_cliente)
+        with zipfile.ZipFile(ruta_zip, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
+            if resultado["ruta_pdf"]:
+                zf.write(resultado["ruta_pdf"], arcname=f"{_NOMBRE_PDF_RECORTADO}.pdf")
+            lineas_errores = [f"{archivo}: {mensaje}" for archivo, mensaje in errores_por_archivo.items()]
+            lineas_coincidencias = [
+                f"{archivo} — \"{nombre}\": {conteo} renglón(es)"
+                for archivo, coincidencias in coincidencias_por_archivo.items()
+                for nombre, conteo in coincidencias.items()
+            ]
+            no_encontrados = [
+                nombre for nombre in nombres
+                if not any(c.get(nombre, 0) for c in coincidencias_por_archivo.values())
+            ]
+            zf.writestr("Resumen_Modo_Simple.pdf", generar_pdf_resumen(
+                "Resumen del procesamiento (Modo por nombre)",
+                [
+                    ("Archivos que no se pudieron procesar", lineas_errores),
+                    ("Nombres que no aparecen en ninguna planilla", no_encontrados),
+                    ("Renglones encontrados por archivo", lineas_coincidencias),
+                ],
+            ))
+        fases["zip"] = time.perf_counter() - inicio
+    finally:
+        shutil.rmtree(carpeta_temporal, ignore_errors=True)
+
+    total_archivos_ok = len(coincidencias_por_archivo)
+    total_coincidencias = sum(
+        conteo for coincidencias in coincidencias_por_archivo.values() for conteo in coincidencias.values()
+    )
+    app.logger.info(
+        "modo simple recortado: %d/%d archivos OK, %d renglón(es), %d nombre(s) sin encontrar",
+        total_archivos_ok, total_archivos_ok + len(errores_por_archivo), total_coincidencias, len(no_encontrados),
+    )
+    fases["total"] = time.perf_counter() - inicio_total
+    tiempos_lote = resultado.get("tiempos", {})
+    tiempos_lote.setdefault("conteos", {}).update(nombres=len(nombres), pdfs=len(rutas_entrada))
+    _registrar_tiempos("simple_recortado", fases, tiempos_lote, bytes_subidos, ruta_zip.stat().st_size)
+
+    @after_this_request
+    def _borrar_zip_temporal(response):
+        ruta_zip.unlink(missing_ok=True)
+        return response
+
+    respuesta = send_file(
+        str(ruta_zip),
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name="nombres_recortados.zip",
+    )
+    respuesta.headers["X-Modo"] = "simple_recortado"
+    respuesta.headers["X-Total-Archivos"] = str(total_archivos_ok)
+    respuesta.headers["X-Total-Errores"] = str(len(errores_por_archivo))
+    respuesta.headers["X-Total-Coincidencias"] = str(total_coincidencias)
+    return respuesta
+
+
+_NOMBRE_PDF_RECORTADO = "Nombres_encontrados"
+
 _FORMATOS_VALIDOS = {"auto", "ccss", "mnk", "ins"}
 
 _LIMITE_BYTES_NO_ENCONTRADOS_HEADER = 4000
@@ -626,6 +741,14 @@ def procesar():
     if archivo_excel and archivo_excel.filename and not archivo_excel.filename.lower().endswith((".xlsx", ".xlsm", ".csv")):
         return jsonify(error="El archivo de nombres debe ser un Excel (.xlsx / .xlsm) o un .csv."), 400
 
+    formato = request.form.get("formato", "auto").strip().lower()
+    if formato not in _FORMATOS_VALIDOS:
+        formato = "auto"
+    resaltar_param = request.form.get("resaltar", "true").strip().lower()
+    resaltar_filas = resaltar_param in ("true", "1", "on", "yes")
+    solo_resaltar_param = request.form.get("solo_resaltar", "false").strip().lower()
+    solo_resaltar = solo_resaltar_param in ("true", "1", "on", "yes")
+
     try:
         registros = None
         if archivo_excel and archivo_excel.filename:
@@ -633,13 +756,6 @@ def procesar():
             archivo_excel.seek(0)
 
         if registros:
-            formato = request.form.get("formato", "auto").strip().lower()
-            if formato not in _FORMATOS_VALIDOS:
-                formato = "auto"
-            resaltar_param = request.form.get("resaltar", "true").strip().lower()
-            resaltar_filas = resaltar_param in ("true", "1", "on", "yes")
-            solo_resaltar_param = request.form.get("solo_resaltar", "false").strip().lower()
-            solo_resaltar = solo_resaltar_param in ("true", "1", "on", "yes")
             with _turno_pymupdf():
                 return _procesar_modo_cliente(
                     registros, archivos, formato, resaltar_filas=resaltar_filas, solo_resaltar=solo_resaltar,
@@ -655,6 +771,10 @@ def procesar():
         return jsonify(error="Escriba al menos un nombre o suba un Excel con la lista de nombres."), 400
 
     with _turno_pymupdf():
-        return _procesar_modo_simple(nombres, archivos)
+        if solo_resaltar:
+            return _procesar_modo_simple(nombres, archivos)
+        return _procesar_modo_simple_recortado(nombres, archivos, formato, resaltar_filas)
+
+
 if __name__ == "__main__":
     app.run(debug=True)

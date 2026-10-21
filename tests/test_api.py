@@ -68,6 +68,7 @@ def test_procesar_excel_no_valido_devuelve_400(cliente_flask, ruta_pdf_ejemplo):
 def test_procesar_modo_simple_devuelve_zip(cliente_flask, ruta_pdf_ejemplo):
     datos = {
         "nombres": "Juan Perez",
+        "solo_resaltar": "true",  # el PDF completo, solo resaltado (comportamiento anterior)
         "pdfs": (_abrir_pdf(ruta_pdf_ejemplo), "planilla.pdf"),
     }
 
@@ -164,6 +165,7 @@ def test_procesar_multiples_pdfs_mismo_nombre(cliente_flask, ruta_pdf_ejemplo):
    
     datos = {
         "nombres": "Juan Perez",
+        "solo_resaltar": "true",
         "pdfs": [
             (_abrir_pdf(ruta_pdf_ejemplo), "planilla.pdf"),
             (_abrir_pdf(ruta_pdf_ejemplo), "planilla.pdf"),
@@ -294,3 +296,37 @@ def test_limpiar_temporales_antiguos_borra_viejos_y_conserva_nuevos():
             shutil.rmtree(carpeta_vieja, ignore_errors=True)
         if carpeta_nueva.exists():
             shutil.rmtree(carpeta_nueva, ignore_errors=True)
+
+
+def test_procesar_modo_simple_por_defecto_recorta_en_un_solo_pdf(cliente_flask, ruta_pdf_ejemplo):
+    datos = {
+        "nombres": "JUAN, LUIS, NO EXISTE",
+        "formato": "mnk",
+        "pdfs": [
+            (_abrir_pdf(ruta_pdf_ejemplo), "planilla.pdf"),
+            (_abrir_pdf(ruta_pdf_ejemplo), "planilla.pdf"),
+        ],
+    }
+
+    respuesta = cliente_flask.post("/api/procesar", data=datos, content_type="multipart/form-data")
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["X-Modo"] == "simple_recortado"
+    assert respuesta.headers["X-Total-Archivos"] == "2"  # dos planillas con el mismo nombre, no se pisan
+    assert respuesta.headers["X-Total-Coincidencias"] == "4"  # JUAN y LUIS en cada planilla
+    with zipfile.ZipFile(io.BytesIO(respuesta.data)) as zf:
+        assert sorted(zf.namelist()) == ["Nombres_encontrados.pdf", "Resumen_Modo_Simple.pdf"]
+
+
+def test_procesar_modo_simple_recortado_sin_coincidencias_solo_trae_resumen(cliente_flask, ruta_pdf_ejemplo):
+    datos = {
+        "nombres": "NADIE QUE EXISTA",
+        "pdfs": (_abrir_pdf(ruta_pdf_ejemplo), "planilla.pdf"),
+    }
+
+    respuesta = cliente_flask.post("/api/procesar", data=datos, content_type="multipart/form-data")
+
+    assert respuesta.status_code == 200
+    assert respuesta.headers["X-Total-Coincidencias"] == "0"
+    with zipfile.ZipFile(io.BytesIO(respuesta.data)) as zf:
+        assert zf.namelist() == ["Resumen_Modo_Simple.pdf"]
