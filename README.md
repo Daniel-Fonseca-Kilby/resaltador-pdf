@@ -5,8 +5,6 @@ nombres o cédulas, y genera copias resaltadas en amarillo — sin modificar
 el PDF original ni perder su encabezado o formato. Se usa desde el
 navegador, no requiere instalar nada en la computadora del usuario final.
 
-Desplegada en **Render** (ver `Procfile`).
-
 ## Modos de uso
 
 La página (`api/templates/index.html`) tiene dos flujos, y el sistema
@@ -84,11 +82,7 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-## Despliegue
-
-Render ejecuta `Procfile` (`gunicorn api.index:app`) sobre la rama
-conectada del repositorio. Cualquier cambio debe subirse a GitHub para
-que Render lo tome — un despliegue local no actualiza el sitio en línea.
+ue local no actualiza el sitio en línea.
 
 Como no hay persistencia, cada solicitud procesa sus PDFs en una carpeta
 temporal aislada que se borra al terminar. Si una solicitud se cancela o
