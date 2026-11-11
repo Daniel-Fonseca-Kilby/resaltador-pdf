@@ -202,9 +202,11 @@ OCR_DPI = 200           # resolución del render para OCR. A 200 el Tesseract ta
 OCR_PSM = "11"          # "texto disperso": lee bien las tablas densas; el PSM 6 (interno de PyMuPDF) se las come
 OCR_CONF_MINIMA = 40    # se ignoran las palabras que Tesseract leyó con poca confianza
 # Las páginas escaneadas se leen en PARALELO (el OCR de cada una es un proceso aparte de Tesseract, el cuello del lote).
-# Tope de procesos simultáneos: no agotar la máquina (el server corre otras apps). Cada Tesseract se fija a 1 hilo
-# (OMP_THREAD_LIMIT) para que el paralelismo sea a nivel de página y no se pisen entre sí.
-OCR_MAX_WORKERS = min(os.cpu_count() or 1, 4)
+# Tope de procesos simultáneos: usa la mitad de los hilos lógicos (deja la otra mitad para el resto del server -el
+# portal, Licitaciones, los hilos de waitress-), con un piso de 2 y un techo de 8. En JUPITER (Xeon 4210, 20 hilos,
+# 128 GB) quedan 8; en una PC chica, 2-4. Cada Tesseract se fija a 1 hilo (OMP_THREAD_LIMIT) para que el paralelismo sea
+# a nivel de página y no se pisen entre sí. Variable de entorno OCR_MAX_WORKERS para ajustarlo sin tocar código.
+OCR_MAX_WORKERS = max(2, min(int(os.environ.get("OCR_MAX_WORKERS") or (os.cpu_count() or 2) // 2), 8))
 UMBRAL_COBERTURA_IMAGEN = 0.5  # una imagen que cubre al menos la mitad de la página = página escaneada (aunque traiga texto)
 OCR_MINIMO_PALABRAS = 3        # si el OCR lee menos palabras que esto, la página escaneada se cuenta como "no leída" (aviso)
 
@@ -410,17 +412,7 @@ def _asegurar_buscable(ruta_pdf: str, carpeta_destino) -> tuple[str, bool]:
         escaneadas = [p for p in documento if _pagina_parece_escaneada(p)]
         if not escaneadas:
             return ruta_pdf, False
-        hubo_ocr = False
-        hubo_cambio = False
-        for pagina in escaneadas:
-            tenia_texto = bool((pagina.get_text() or "").strip())
-            if _ocr_a_capa(pagina):
-                hubo_ocr = True
-                hubo_cambio = True
-            elif tenia_texto:
-                # el OCR no leyó bien, pero _ocr_a_capa ya le quitó la capa basura del escáner: se guarda igual, para
-                # que esos dígitos mal ubicados no sigan provocando resaltados equivocados (mejor sin resaltar + aviso)
-                hubo_cambio = True
+        hubo_ocr, hubo_cambio = _ocr_paginas_en_paralelo(escaneadas, _tesseract_exe())
         if not hubo_cambio:
             return ruta_pdf, False
         carpeta = Path(carpeta_destino)
