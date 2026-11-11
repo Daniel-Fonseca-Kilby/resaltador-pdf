@@ -9,6 +9,7 @@ import threading
 import time
 import unicodedata
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -48,7 +49,7 @@ class _Cronometro:
         self.conteos: dict[str, int] = defaultdict(int)
 
     @contextmanager
-    def medir(self, fase: str):
+    def medir(self, fase: str): 
         inicio = time.perf_counter()
         try:
             yield
@@ -196,9 +197,14 @@ def _demasiadas_paginas() -> str:
 # eso el OCR no corre y todo sigue igual (un PDF digital nunca entra al OCR).
 UMBRAL_TEXTO_OCR = 10   # menos de estos caracteres en una página (sin imagen grande) = escaneada
 OCR_IDIOMA = "spa"
-OCR_DPI = 300           # resolución nativa de los escaneos de la CCSS (su imagen embebida es de 300 dpi)
+OCR_DPI = 200           # resolución del render para OCR. A 200 el Tesseract tarda ~la mitad que a 300 y lee lo mismo en
+                        # las pruebas; si un escaneo real de mala calidad leyera peor, subir a 300 (más lento).
 OCR_PSM = "11"          # "texto disperso": lee bien las tablas densas; el PSM 6 (interno de PyMuPDF) se las come
 OCR_CONF_MINIMA = 40    # se ignoran las palabras que Tesseract leyó con poca confianza
+# Las páginas escaneadas se leen en PARALELO (el OCR de cada una es un proceso aparte de Tesseract, el cuello del lote).
+# Tope de procesos simultáneos: no agotar la máquina (el server corre otras apps). Cada Tesseract se fija a 1 hilo
+# (OMP_THREAD_LIMIT) para que el paralelismo sea a nivel de página y no se pisen entre sí.
+OCR_MAX_WORKERS = min(os.cpu_count() or 1, 4)
 UMBRAL_COBERTURA_IMAGEN = 0.5  # una imagen que cubre al menos la mitad de la página = página escaneada (aunque traiga texto)
 OCR_MINIMO_PALABRAS = 3        # si el OCR lee menos palabras que esto, la página escaneada se cuenta como "no leída" (aviso)
 
@@ -232,6 +238,12 @@ def _contar_escaneada_sin_leer() -> None:
     global _paginas_escaneadas_sin_ocr
     with _ocr_lock:
         _paginas_escaneadas_sin_ocr += 1
+
+
+def _contar_pagina_ocr() -> None:
+    global _paginas_ocr
+    with _ocr_lock:
+        _paginas_ocr += 1
 
 
 def _cobertura_imagen(pagina) -> float:
@@ -281,8 +293,9 @@ def _palabras_ocr(exe: str, ruta_png: str) -> list[tuple]:
     """Corre Tesseract sobre la imagen y devuelve [(texto, left, top, ancho, alto), …] en píxeles, de las palabras
     leídas con confianza suficiente."""
     base = ruta_png[:-4] if ruta_png.lower().endswith(".png") else ruta_png
+    entorno = dict(os.environ, OMP_THREAD_LIMIT="1")  # 1 hilo por Tesseract: el paralelismo es a nivel de página
     subprocess.run([exe, ruta_png, base, "--psm", OCR_PSM, "-l", OCR_IDIOMA, "tsv"],
-                   check=True, capture_output=True)
+                   check=True, capture_output=True, env=entorno)
     palabras: list[tuple] = []
     with open(base + ".tsv", encoding="utf-8", errors="replace", newline="") as f:
         for fila in csv.DictReader(f, delimiter="\t"):
@@ -330,31 +343,54 @@ def _quitar_capa_de_texto(pagina) -> bool:
         return False
 
 
-def _ocr_a_capa(pagina) -> bool:
-    """Lee la página escaneada con Tesseract y le escribe la capa de texto invisible, después de quitarle cualquier capa
-    basura del escáner. True si se leyó bien; False si no hay Tesseract, si falla, o si leyó muy poco (en ese caso se
-    cuenta como página escaneada no leída, para avisar en vez de resaltar mal en silencio)."""
-    exe = _tesseract_exe()
-    if not exe:
-        return False
-    try:
-        _quitar_capa_de_texto(pagina)
+def _ocr_paginas_en_paralelo(escaneadas: list, exe: str) -> tuple[bool, bool]:
+    """Lee las páginas escaneadas y les escribe la capa de texto invisible. El OCR de cada página (Tesseract, el cuello
+    del lote) corre en PARALELO -un proceso por página-; las operaciones de PyMuPDF (quitar la capa basura, rasterizar,
+    escribir la capa) van en el hilo principal, que no es seguro compartir entre hilos. Se procesa por tandas de
+    OCR_MAX_WORKERS para no acumular en disco los PNG de un escaneo grande. Devuelve (hubo_ocr, hubo_cambio): hubo_cambio
+    incluye las páginas a las que solo se les quitó la capa basura (se guardan igual para no sobre-resaltar con ella)."""
+    hubo_ocr = False
+    hubo_cambio = False
+    escala = 72 / OCR_DPI
+    for inicio in range(0, len(escaneadas), OCR_MAX_WORKERS):
+        tanda = escaneadas[inicio:inicio + OCR_MAX_WORKERS]
         with tempfile.TemporaryDirectory(prefix="ocr_") as carpeta:
-            png = os.path.join(carpeta, "pagina.png")
-            pagina.get_pixmap(dpi=OCR_DPI).save(png)
-            palabras = _palabras_ocr(exe, png)
-    except Exception as error:  # un OCR que falla en una página no debe tumbar todo el lote
-        log.warning("OCR de una página falló (%s): se sigue sin OCR en esa página", error)
-        _contar_escaneada_sin_leer()
-        return False
-    if len(palabras) < OCR_MINIMO_PALABRAS:
-        _contar_escaneada_sin_leer()
-        return False
-    _escribir_capa_invisible(pagina, palabras, 72 / OCR_DPI)
-    global _paginas_ocr
-    with _ocr_lock:
-        _paginas_ocr += 1
-    return True
+            preparadas = []  # (pagina, png) listas para OCR
+            for i, pagina in enumerate(tanda):
+                if _quitar_capa_de_texto(pagina):
+                    hubo_cambio = True
+                png = os.path.join(carpeta, f"p{i}.png")
+                try:
+                    pagina.get_pixmap(dpi=OCR_DPI).save(png)
+                except Exception as error:
+                    log.warning("No se pudo rasterizar una página para OCR (%s): se sigue sin OCR en esa página", error)
+                    _contar_escaneada_sin_leer()
+                    continue
+                preparadas.append((pagina, png))
+
+            def _leer(png):
+                try:
+                    return _palabras_ocr(exe, png)
+                except Exception as error:  # un OCR que falla en una página no debe tumbar todo el lote
+                    log.warning("OCR de una página falló (%s): se sigue sin OCR en esa página", error)
+                    return None
+
+            trabajadores = max(1, min(OCR_MAX_WORKERS, len(preparadas)))
+            if trabajadores > 1:
+                with ThreadPoolExecutor(max_workers=trabajadores) as ejecutor:
+                    lecturas = list(ejecutor.map(lambda par: _leer(par[1]), preparadas))
+            else:
+                lecturas = [_leer(par[1]) for par in preparadas]
+
+            for (pagina, _png), palabras in zip(preparadas, lecturas):
+                if not palabras or len(palabras) < OCR_MINIMO_PALABRAS:
+                    _contar_escaneada_sin_leer()
+                    continue
+                _escribir_capa_invisible(pagina, palabras, escala)
+                _contar_pagina_ocr()
+                hubo_ocr = True
+                hubo_cambio = True
+    return hubo_ocr, hubo_cambio
 
 
 def _asegurar_buscable(ruta_pdf: str, carpeta_destino) -> tuple[str, bool]:
