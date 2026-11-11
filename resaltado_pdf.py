@@ -1,4 +1,11 @@
+import csv
 import io
+import logging
+import os
+import shutil
+import subprocess
+import tempfile
+import threading
 import time
 import unicodedata
 from collections import defaultdict
@@ -10,6 +17,26 @@ from pathlib import Path
 import openpyxl
 import pymupdf as fitz  # alias tradicional de PyMuPDF
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+log = logging.getLogger("resaltado")
+# Los PDF vienen de afuera: uno hecho a propósito no puede ocupar el servidor para todos (PyMuPDF atiende de a un lote).
+MAXIMO_PAGINAS_POR_PDF = 5000
+MAXIMO_SEGUNDOS_POR_LOTE = 15 * 60
+
+
+def _desactivar_busy_loop_de_pymupdf() -> None:
+    """PyMuPDF 1.28.2 llama en CADA Annot.update() a un `update_timing_test()` que es un bucle vacío de 30 000 vueltas
+    (suma 0..30000 y descarta el resultado) -instrumentación olvidada que no cambia el PDF, solo quema ~1 ms por
+    anotación. En un lote con miles de resaltados se van varios segundos. Lo volvemos un no-op. Con guardas por si una
+    versión futura ya lo arregló o lo quitó (requirements fija pymupdf==1.28.2, así que hoy siempre aplica)."""
+    try:
+        if hasattr(fitz.Annot, "update_timing_test"):
+            fitz.Annot.update_timing_test = staticmethod(lambda: 0)
+    except Exception as error:  # nunca debe impedir que cargue el módulo
+        log.debug("No se pudo neutralizar update_timing_test de PyMuPDF: %s", error)
+
+
+_desactivar_busy_loop_de_pymupdf()
 
 
 class _Cronometro:
@@ -45,6 +72,7 @@ class ResultadoResaltado:
     coincidencias_por_nombre: dict  # {"JUAN PEREZ": 3, "MARIA LOPEZ": 0}
     ruta_salida: str
     tiempos: dict = field(default_factory=dict)
+    uso_ocr: bool = False  # True si alguna página venía escaneada y se leyó con OCR
 
 
 @lru_cache(maxsize=4096)
@@ -144,9 +172,235 @@ def _buscar_por_fila(pagina, palabras: list[str], textpage=None):
     return filas_encontradas
 
 
+def _regenerar_campos(pagina) -> None:
+    """Si el PDF no trae ya generada la apariencia de un campo, PyMuPDF lo captura en blanco. Si no se puede, sale como
+    venía: es un detalle visual, no frena el lote."""
+    for widget in pagina.widgets() or []:
+        try:
+            widget.update()
+        except Exception as error:
+            log.debug("No se pudo regenerar un campo del PDF: %s", error)
+
+
+def _demasiadas_paginas() -> str:
+    return f"El PDF tiene demasiadas páginas (máximo {MAXIMO_PAGINAS_POR_PDF}). Divídalo e inténtelo de nuevo."
+
+
+# --- OCR para planillas escaneadas -------------------------------------------------------------------------------
+# Algunas planillas llegan escaneadas (cada página es una imagen, sin capa de texto): search_for/get_text no encuentran
+# nada que resaltar. Cuando una página no trae texto, se lee con Tesseract (empaquetado en tesseract/, portable) y su
+# lectura se escribe como una CAPA DE TEXTO INVISIBLE sobre la página, con la posición de cada palabra. Así todo lo de
+# abajo (nombres, cédula, anclas del encabezado y del pie, franjas) funciona igual que en un PDF digital. El OCR interno
+# de PyMuPDF no sirve acá: usa el modo de segmentación PSM 6, que se come las tablas densas de la CCSS (leía 1 de 20
+# filas). El arranque del servidor fija TESSERACT_EXE (al tesseract.exe del paquete) y TESSDATA_PREFIX (al idioma); sin
+# eso el OCR no corre y todo sigue igual (un PDF digital nunca entra al OCR).
+UMBRAL_TEXTO_OCR = 10   # menos de estos caracteres en una página (sin imagen grande) = escaneada
+OCR_IDIOMA = "spa"
+OCR_DPI = 300           # resolución nativa de los escaneos de la CCSS (su imagen embebida es de 300 dpi)
+OCR_PSM = "11"          # "texto disperso": lee bien las tablas densas; el PSM 6 (interno de PyMuPDF) se las come
+OCR_CONF_MINIMA = 40    # se ignoran las palabras que Tesseract leyó con poca confianza
+UMBRAL_COBERTURA_IMAGEN = 0.5  # una imagen que cubre al menos la mitad de la página = página escaneada (aunque traiga texto)
+OCR_MINIMO_PALABRAS = 3        # si el OCR lee menos palabras que esto, la página escaneada se cuenta como "no leída" (aviso)
+
+# Contadores del lote actual, para avisar en la web. _paginas_ocr: páginas leídas con OCR. _paginas_escaneadas_sin_ocr:
+# páginas que parecían escaneadas pero el OCR no pudo leer (así se avisa claro en vez de resaltar mal en silencio). El
+# trabajo de PyMuPDF está serializado (un lote a la vez, ver _turno_pymupdf en api/index.py), así que contadores de
+# módulo alcanzan; aun así se protegen con un candado. La web los reinicia al empezar cada lote y los lee al responder.
+_ocr_lock = threading.Lock()
+_paginas_ocr = 0
+_paginas_escaneadas_sin_ocr = 0
+
+
+def reiniciar_contador_ocr() -> None:
+    global _paginas_ocr, _paginas_escaneadas_sin_ocr
+    with _ocr_lock:
+        _paginas_ocr = 0
+        _paginas_escaneadas_sin_ocr = 0
+
+
+def paginas_leidas_con_ocr() -> int:
+    with _ocr_lock:
+        return _paginas_ocr
+
+
+def paginas_escaneadas_sin_leer() -> int:
+    with _ocr_lock:
+        return _paginas_escaneadas_sin_ocr
+
+
+def _contar_escaneada_sin_leer() -> None:
+    global _paginas_escaneadas_sin_ocr
+    with _ocr_lock:
+        _paginas_escaneadas_sin_ocr += 1
+
+
+def _cobertura_imagen(pagina) -> float:
+    """Fracción de la página cubierta por imágenes rasterizadas (0 a 1). Un escaneo es una imagen a página casi
+    completa; un PDF digital, a lo sumo un logo chico. Se suman las imágenes (recortadas a la página), por si el escáner
+    partió la hoja en varias bandas; se topa en 1.0."""
+    area = pagina.rect.width * pagina.rect.height
+    if area <= 0:
+        return 0.0
+    try:
+        infos = pagina.get_image_info()
+    except Exception:
+        return 0.0
+    cubierto = 0.0
+    for info in infos:
+        try:
+            r = fitz.Rect(info["bbox"]) & pagina.rect
+        except Exception:
+            continue
+        if r.is_valid and not r.is_empty:
+            cubierto += abs(r.width * r.height)
+    return min(1.0, cubierto / area)
+
+
+def _pagina_parece_escaneada(pagina) -> bool:
+    """Una página necesita OCR cuando una imagen la cubre casi entera -está escaneada, aunque traiga una capa de texto
+    (la mala OCR del propio escáner, que si no se cuela como 'digital' y resalta filas equivocadas). También si casi no
+    tiene texto y hay algo de imagen. Un PDF digital normal no entra: su texto es vectorial y sus imágenes son chicas."""
+    cobertura = _cobertura_imagen(pagina)
+    if cobertura >= UMBRAL_COBERTURA_IMAGEN:
+        return True
+    if cobertura > 0:
+        return len((pagina.get_text() or "").strip()) < UMBRAL_TEXTO_OCR
+    return False
+
+
+def _tesseract_exe() -> str | None:
+    """El tesseract.exe a usar: el empaquetado (variable TESSERACT_EXE, la fija el arranque del servidor) o uno del
+    sistema; None si no hay (entonces no se hace OCR y los escaneos siguen sin texto)."""
+    exe = os.environ.get("TESSERACT_EXE")
+    if exe and os.path.exists(exe):
+        return exe
+    return shutil.which("tesseract")
+
+
+def _palabras_ocr(exe: str, ruta_png: str) -> list[tuple]:
+    """Corre Tesseract sobre la imagen y devuelve [(texto, left, top, ancho, alto), …] en píxeles, de las palabras
+    leídas con confianza suficiente."""
+    base = ruta_png[:-4] if ruta_png.lower().endswith(".png") else ruta_png
+    subprocess.run([exe, ruta_png, base, "--psm", OCR_PSM, "-l", OCR_IDIOMA, "tsv"],
+                   check=True, capture_output=True)
+    palabras: list[tuple] = []
+    with open(base + ".tsv", encoding="utf-8", errors="replace", newline="") as f:
+        for fila in csv.DictReader(f, delimiter="\t"):
+            texto = (fila.get("text") or "").strip()
+            try:
+                conf = float(fila.get("conf", "-1"))
+            except ValueError:
+                conf = -1.0
+            if texto and conf >= OCR_CONF_MINIMA:
+                palabras.append((texto, float(fila["left"]), float(fila["top"]),
+                                 float(fila["width"]), float(fila["height"])))
+    return palabras
+
+
+def _escribir_capa_invisible(pagina, palabras: list[tuple], escala: float) -> None:
+    """Escribe cada palabra del OCR como texto invisible (render_mode=3) en su posición (escalada a puntos PDF), para
+    que search_for/get_text la encuentren. Descarta detecciones repetidas (PSM 11 a veces lee dos veces la misma)."""
+    vistas: set = set()
+    for texto, left, top, ancho, alto in palabras:
+        clave = (texto, round(left * escala), round(top * escala))
+        if clave in vistas:
+            continue
+        vistas.add(clave)
+        x = left * escala
+        y = (top + alto) * escala                 # la línea base va cerca del borde inferior de la caja
+        tam = max(1.0, alto * escala * 0.92)
+        try:
+            pagina.insert_text((x, y), texto, fontsize=tam, render_mode=3)  # render_mode 3 = invisible
+        except Exception:
+            pass  # un carácter que la fuente no cubra no debe cortar el lote
+
+
+def _quitar_capa_de_texto(pagina) -> bool:
+    """Borra la capa de texto de la página (la mala OCR del escáner) dejando la imagen del escaneo intacta, para que
+    esos dígitos mal ubicados no compitan con la lectura buena del OCR ni provoquen resaltados equivocados. True si
+    había texto y se quitó. Si no se puede, se sigue: peor es no leer la página."""
+    if not (pagina.get_text() or "").strip():
+        return False
+    try:
+        pagina.add_redact_annot(pagina.rect)
+        pagina.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE, graphics=fitz.PDF_REDACT_LINE_ART_NONE)
+        return True
+    except Exception as error:
+        log.debug("No se pudo quitar la capa de texto del escaneo: %s", error)
+        return False
+
+
+def _ocr_a_capa(pagina) -> bool:
+    """Lee la página escaneada con Tesseract y le escribe la capa de texto invisible, después de quitarle cualquier capa
+    basura del escáner. True si se leyó bien; False si no hay Tesseract, si falla, o si leyó muy poco (en ese caso se
+    cuenta como página escaneada no leída, para avisar en vez de resaltar mal en silencio)."""
+    exe = _tesseract_exe()
+    if not exe:
+        return False
+    try:
+        _quitar_capa_de_texto(pagina)
+        with tempfile.TemporaryDirectory(prefix="ocr_") as carpeta:
+            png = os.path.join(carpeta, "pagina.png")
+            pagina.get_pixmap(dpi=OCR_DPI).save(png)
+            palabras = _palabras_ocr(exe, png)
+    except Exception as error:  # un OCR que falla en una página no debe tumbar todo el lote
+        log.warning("OCR de una página falló (%s): se sigue sin OCR en esa página", error)
+        _contar_escaneada_sin_leer()
+        return False
+    if len(palabras) < OCR_MINIMO_PALABRAS:
+        _contar_escaneada_sin_leer()
+        return False
+    _escribir_capa_invisible(pagina, palabras, 72 / OCR_DPI)
+    global _paginas_ocr
+    with _ocr_lock:
+        _paginas_ocr += 1
+    return True
+
+
+def _asegurar_buscable(ruta_pdf: str, carpeta_destino) -> tuple[str, bool]:
+    """Si el PDF tiene páginas escaneadas (sin texto) y hay Tesseract, escribe en carpeta_destino una copia con capa de
+    texto OCR (mismo nombre de archivo) y devuelve (esa ruta, True). Si ya es buscable o no hay OCR, (ruta original,
+    False). Trabajar sobre una copia buscable deja que TODO el pipeline —búsqueda, encabezado, pie— la lea como un PDF
+    digital (el pie, por ejemplo, re-abre el archivo, así que la capa tiene que estar en el archivo, no solo en memoria)."""
+    if not _tesseract_exe():
+        return ruta_pdf, False
+    try:
+        documento = fitz.open(ruta_pdf)
+    except Exception:
+        return ruta_pdf, False
+    try:
+        if documento.is_encrypted:
+            return ruta_pdf, False  # el chequeo de contraseña (con mensaje claro) lo hace la función de entrada
+        escaneadas = [p for p in documento if _pagina_parece_escaneada(p)]
+        if not escaneadas:
+            return ruta_pdf, False
+        hubo_ocr = False
+        hubo_cambio = False
+        for pagina in escaneadas:
+            tenia_texto = bool((pagina.get_text() or "").strip())
+            if _ocr_a_capa(pagina):
+                hubo_ocr = True
+                hubo_cambio = True
+            elif tenia_texto:
+                # el OCR no leyó bien, pero _ocr_a_capa ya le quitó la capa basura del escáner: se guarda igual, para
+                # que esos dígitos mal ubicados no sigan provocando resaltados equivocados (mejor sin resaltar + aviso)
+                hubo_cambio = True
+        if not hubo_cambio:
+            return ruta_pdf, False
+        carpeta = Path(carpeta_destino)
+        carpeta.mkdir(parents=True, exist_ok=True)
+        destino = carpeta / Path(ruta_pdf).name
+        documento.save(str(destino))
+        return str(destino), hubo_ocr
+    finally:
+        documento.close()
+
+
 def resaltar_nombres_en_pdf(ruta_pdf: str, nombres: list[str], ruta_salida: str) -> ResultadoResaltado:
     """Resalta cada nombre de la lista en el PDF y guarda la copia en ruta_salida."""
     cronometro = _Cronometro()
+    with cronometro.medir("ocr"):
+        ruta_pdf, hubo_ocr = _asegurar_buscable(ruta_pdf, Path(ruta_salida).parent / "_buscables_ocr")
     with cronometro.medir("abrir_pdf"):
         documento = fitz.open(ruta_pdf)
     if documento.is_encrypted:
@@ -154,6 +408,9 @@ def resaltar_nombres_en_pdf(ruta_pdf: str, nombres: list[str], ruta_salida: str)
         raise ValueError(
             "El PDF está protegido con contraseña. Quite la protección e inténtelo de nuevo."
         )
+    if documento.page_count > MAXIMO_PAGINAS_POR_PDF:
+        documento.close()
+        raise ValueError(_demasiadas_paginas())
 
     conteo = {nombre: 0 for nombre in nombres}
 
@@ -205,6 +462,7 @@ def resaltar_nombres_en_pdf(ruta_pdf: str, nombres: list[str], ruta_salida: str)
         coincidencias_por_nombre=conteo,
         ruta_salida=ruta_salida,
         tiempos=cronometro.resumen(),
+        uso_ocr=hubo_ocr,
     )
 
 
@@ -284,7 +542,8 @@ def _techo_de_datos(pagina, formato: str = "auto", textpage=None) -> float | Non
     for estrategia in ("lines_strict", "lines", "text"):
         try:
             tablas = pagina.find_tables(strategy=estrategia).tables
-        except Exception:
+        except Exception as error:
+            log.debug("La estrategia %s no pudo leer las tablas: %s", estrategia, error)
             continue
         if not tablas:
             continue
@@ -503,20 +762,82 @@ def _construir_mapas_cedula(registros: list[dict]) -> tuple[dict, dict, dict]:
     return registros_unicos, mapa_cedulas, mapa_id_a_cedula_real
 
 
-def _localizar_coincidencias_de_cedula(pagina, palabras: list, y0s_cedulas_pagina: list[float], mapa_cedulas: dict, mapa_id_a_cedula_real: dict):
+def _nombre_de_fila_coincide(palabras: list, y0: float, nombre_esperado: str) -> bool:
+    """¿El nombre esperado del Excel es plausible en la fila que arranca en y0?
+    Conservador a propósito: solo DESCARTA (False) cuando el nombre esperado trae
+    >=2 palabras significativas, la fila trae su propio nombre (>=2 palabras de
+    letras) y NINGUNA palabra del esperado aparece en la fila. Eso pasa cuando el
+    OCR confundió una cédula con la de OTRA persona (visto en escaneos densos: la
+    cédula de alguien se lee como la de otro empleado). Si el Excel no trae nombre
+    útil o la fila no trae un nombre claro, no filtra -mejor no arriesgar un
+    descarte. Un descarte deja esa fila sin resaltar (sale en "no encontrados"),
+    que es seguro; un match equivocado facturaría a la persona equivocada."""
+    tokens_esperados = [t for t in (nombre_esperado or "").split() if len(t) >= 3]
+    if len(tokens_esperados) < 2:
+        return True
+    palabras_fila = [w[4] for w in palabras if abs(w[1] - y0) <= _TOLERANCIA_FILA]
+    palabras_con_letras = [p for p in palabras_fila if len(p) >= 3 and any(c.isalpha() for c in p)]
+    if len(palabras_con_letras) < 2:
+        return True
+    texto_fila_norm = _normalizar(" ".join(palabras_fila))
+    return any(
+        any(_normalizar(v) in texto_fila_norm for v in (tok, *_variantes_ene(tok)))
+        for tok in tokens_esperados
+    )
+
+
+def _vecinos_distancia_1(digitos: str):
+    """Variantes con UN dígito cambiado (misma longitud) -los típicos errores del OCR (0/8, 1/7, 5/6, 3/8…)."""
+    for i in range(len(digitos)):
+        for d in "0123456789":
+            if d != digitos[i]:
+                yield digitos[:i] + d + digitos[i + 1:]
+
+
+def _recuperar_cedula_por_cercania(digitos: str, cedulas_oficiales: frozenset) -> str | None:
+    """La ÚNICA cédula oficial a distancia-1 (misma longitud, 1 dígito distinto) de lo que leyó el OCR, o None si no hay
+    o si hay más de una (ambiguo -no se arriesga). Solo tiene sentido con cédulas (>=8 dígitos), no con salarios."""
+    if len(digitos) < 8:
+        return None
+    candidatas = {v for v in _vecinos_distancia_1(digitos) if v in cedulas_oficiales}
+    return next(iter(candidatas)) if len(candidatas) == 1 else None
+
+
+def _localizar_coincidencias_de_cedula(
+    pagina, palabras: list, y0s_cedulas_pagina: list[float], mapa_cedulas: dict, mapa_id_a_cedula_real: dict,
+    mapa_nombres: dict | None = None, verificar_nombre: bool = False, cedulas_oficiales: frozenset | None = None,
+):
     for x0, y0, x1, y1, palabra, *_resto in palabras:
         digitos = "".join(c for c in palabra if c.isdigit())
         if not digitos:
             continue
         clientes = _coincide_cliente(digitos, mapa_cedulas)
-        if not clientes:
-            continue
         clave_cedula_hallada = _normalizar_cedula(digitos)
         if clave_cedula_hallada not in mapa_cedulas and len(digitos) > 1:
             clave_cedula_hallada = _normalizar_cedula(digitos[1:])
-
         clave_cedula = mapa_id_a_cedula_real.get(clave_cedula_hallada, clave_cedula_hallada)
         hallado_por_numero_asegurado = clave_cedula != clave_cedula_hallada
+
+        if clientes:
+            # Match exacto. Solo en escaneados (verificar_nombre): el OCR puede leer la cédula de alguien como la de otro
+            # empleado, así que se confirma que el nombre de la fila concuerda con el del Excel antes de darlo por bueno.
+            if verificar_nombre and mapa_nombres is not None:
+                if not _nombre_de_fila_coincide(palabras, y0, mapa_nombres.get(clave_cedula, "")):
+                    continue
+        else:
+            # Sin match exacto. SOLO en escaneados y SI el nombre confirma, se recupera un error de 1 dígito del OCR
+            # (devuelve a un oficial que si no quedaría sin resaltar). El nombre es la red de seguridad: sin él no se
+            # recupera, así que un número ajeno leído cerca de una cédula oficial no puede colarse.
+            if not (verificar_nombre and mapa_nombres is not None and cedulas_oficiales):
+                continue
+            recuperada = _recuperar_cedula_por_cercania(_normalizar_cedula(digitos), cedulas_oficiales)
+            if recuperada is None or not _nombre_de_fila_coincide(palabras, y0, mapa_nombres.get(recuperada, "")):
+                continue
+            clientes = mapa_cedulas.get(recuperada) or []
+            if not clientes:
+                continue
+            clave_cedula = mapa_id_a_cedula_real.get(recuperada, recuperada)
+            hallado_por_numero_asegurado = False
 
         franja = _franja_de_fila(pagina, palabras, y0, y0s_cedulas_pagina)
 
@@ -587,15 +908,21 @@ def resaltar_por_cedula_y_exportar_por_cliente(
     un PDF de salida."""
     cronometro = _Cronometro()
     registros_unicos, mapa_cedulas, mapa_id_a_cedula_real = _construir_mapas_cedula(registros)
+    mapa_nombres = {}
+    for (ced, _cli), datos in registros_unicos.items():
+        mapa_nombres.setdefault(ced, datos.get("nombre", ""))
+    cedulas_oficiales = frozenset(mapa_cedulas)
+    archivo_con_ocr = {"actual": False}  # el archivo que se procesa ahora vino escaneado -se verifica el nombre de la fila
     if localizar is None:
         def localizar(pagina, palabras, y0s_anclas, _textpage):
             return _localizar_coincidencias_de_cedula(
                 pagina, palabras, y0s_anclas, mapa_cedulas, mapa_id_a_cedula_real,
+                mapa_nombres=mapa_nombres, verificar_nombre=archivo_con_ocr["actual"],
+                cedulas_oficiales=cedulas_oficiales,
             )
 
     estado_por_cliente: dict[str, dict] = {}
     polizas_encontradas: dict[tuple[str, str], set] = {}
-    archivos_usados_por_cliente: dict[str, set] = {}  # para que la segunda pasada no reabra una póliza ya cerrada
     errores_por_archivo: dict[str, str] = {}
     # quiénes se encontraron por su número de asegurado (no por su cédula/
     # DIMEX) -conviene que Facturación lo sepa, igual que con "encontrado
@@ -604,6 +931,8 @@ def resaltar_por_cedula_y_exportar_por_cliente(
 
     carpeta = Path(carpeta_salida)
     carpeta.mkdir(parents=True, exist_ok=True)
+    carpeta_buscables = carpeta / "_buscables_ocr"   # copias con capa OCR de los escaneos (las limpia la web con el temporal)
+    hubo_ocr_lote = False
 
     def _obtener_estado(cliente: str, pagina_origen) -> dict:
         estado = estado_por_cliente.get(cliente)
@@ -756,11 +1085,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                 if pagina_total is not None:
                     # si el PDF no trae ya generada la apariencia del campo,
                     # PyMuPDF lo captura en blanco -forzar que la regenere
-                    for widget in pagina_total.widgets() or []:
-                        try:
-                            widget.update()
-                        except Exception:
-                            pass
+                    _regenerar_campos(pagina_total)
                     pixmap = pagina_total.get_pixmap(clip=franja_total, matrix=fitz.Matrix(2, 2))
                     bloques_pie.append((
                         pagina_total.number, franja_total.y0,
@@ -792,11 +1117,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                             break
 
                     if pagina_cierre is not None:
-                        for widget in pagina_cierre.widgets() or []:
-                            try:
-                                widget.update()
-                            except Exception:
-                                pass
+                        _regenerar_campos(pagina_cierre)
                         y0_inicio_cierre = y0_ultima_fila + 14
                       
                         palabras_resto = [
@@ -830,17 +1151,13 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                                 break  # ya empezó otra sección con filas de empleado
                             if not pagina_siguiente.get_text().strip():
                                 continue  # hoja realmente en blanco, se salta
-                            for widget in pagina_siguiente.widgets() or []:
-                                try:
-                                    widget.update()
-                                except Exception:
-                                    pass
+                            _regenerar_campos(pagina_siguiente)
                             pixmap = pagina_siguiente.get_pixmap(matrix=fitz.Matrix(2, 2))
                             resultado.append((
                                 pixmap.tobytes("png"), pagina_siguiente.rect.width, pagina_siguiente.rect.height,
                             ))
         except Exception:
-            pass
+            log.warning("No se pudo copiar el pie de %s; el archivo sale sin él", ruta_pdf_saliente, exc_info=True)
         finally:
             documento_pie.close()
 
@@ -855,8 +1172,16 @@ def resaltar_por_cedula_y_exportar_por_cliente(
             for png_bytes, ancho_pagina, alto_franja in bloques_pie:
                 _agregar_imagen_cacheada(estado, png_bytes, ancho_pagina, alto_franja)
 
+    vence = time.monotonic() + MAXIMO_SEGUNDOS_POR_LOTE
     for ruta_pdf in rutas_pdfs:
         nombre_archivo = Path(ruta_pdf).name
+        if time.monotonic() > vence:
+            errores_por_archivo[nombre_archivo] = "Se acabó el tiempo del lote antes de llegar a este archivo."
+            continue
+        with cronometro.medir("ocr"):
+            ruta_pdf, _uso = _asegurar_buscable(ruta_pdf, carpeta_buscables)
+            hubo_ocr_lote = hubo_ocr_lote or _uso
+        archivo_con_ocr["actual"] = _uso  # en un escaneado se verifica el nombre de la fila (_localizar_coincidencias_de_cedula)
         try:
             with cronometro.medir("abrir_pdf"):
                 documento = fitz.open(ruta_pdf)
@@ -869,6 +1194,10 @@ def resaltar_por_cedula_y_exportar_por_cliente(
             errores_por_archivo[nombre_archivo] = (
                 "El PDF está protegido con contraseña. Quite la protección e inténtelo de nuevo."
             )
+            continue
+        if documento.page_count > MAXIMO_PAGINAS_POR_PDF:
+            documento.close()
+            errores_por_archivo[nombre_archivo] = _demasiadas_paginas()
             continue
 
         encabezado_archivo = None
@@ -899,13 +1228,16 @@ def resaltar_por_cedula_y_exportar_por_cliente(
                         vistas.append(franja)
 
                         estado = _obtener_estado(cliente, pagina)
-                        archivos_usados_por_cliente.setdefault(cliente, set()).add(ruta_pdf)
 
                         if estado["archivo_actual"] != ruta_pdf:
                             if estado["archivo_actual"] is not None:
                                 cronometro.contar("cambios_de_poliza")
                                 _agregar_pie_de_poliza(estado, estado["archivo_actual"])
-                                _flush_a_disco(estado)
+                                # El PDF del cliente se deja ABIERTO entre pólizas: antes se guardaba+cerraba+reabría en
+                                # cada cambio (cientos de reaperturas, el mayor costo del modo cliente). El contenido de
+                                # cada póliza se copia con show_pdf_page mientras su PDF origen está abierto, así que no
+                                # hace falta persistir el del cliente hasta el final. El guardado único es _flush_a_disco
+                                # al cerrar el lote.
                             if not encabezado_calculado:
                                 primera_pagina = documento[0]
                                 with cronometro.medir("detectar_encabezado"):
@@ -956,6 +1288,7 @@ def resaltar_por_cedula_y_exportar_por_cliente(
         "no_encontrados": no_encontrados,
         "errores_por_archivo": errores_por_archivo,
         "detalle_registros": detalle_registros,
+        "uso_ocr": hubo_ocr_lote,
         "tiempos": cronometro.resumen(),
     }
 
@@ -1033,6 +1366,7 @@ def resaltar_nombres_y_recortar(
         "ruta_pdf": resultado["archivos_por_cliente"].get(_GRUPO_MODO_NOMBRE),
         "coincidencias_por_archivo": conteo_por_archivo,
         "errores_por_archivo": resultado["errores_por_archivo"],
+        "uso_ocr": resultado.get("uso_ocr", False),
         "tiempos": resultado["tiempos"],
     }
 
@@ -1044,6 +1378,10 @@ def resaltar_por_cedula_sin_recortar(
 ) -> dict:
     cronometro = _Cronometro()
     registros_unicos, mapa_cedulas, mapa_id_a_cedula_real = _construir_mapas_cedula(registros)
+    mapa_nombres = {}
+    for (ced, _cli), datos in registros_unicos.items():
+        mapa_nombres.setdefault(ced, datos.get("nombre", ""))
+    cedulas_oficiales = frozenset(mapa_cedulas)
 
     polizas_encontradas: dict[tuple[str, str], set] = {}
     encontrados_por_numero_asegurado: set = set()
@@ -1052,9 +1390,18 @@ def resaltar_por_cedula_sin_recortar(
 
     carpeta = Path(carpeta_salida)
     carpeta.mkdir(parents=True, exist_ok=True)
+    carpeta_buscables = carpeta / "_buscables_ocr"   # copias con capa OCR de los escaneos (las limpia la web con el temporal)
+    hubo_ocr_lote = False
 
+    vence = time.monotonic() + MAXIMO_SEGUNDOS_POR_LOTE
     for ruta_pdf in rutas_pdfs:
         nombre_archivo = Path(ruta_pdf).name
+        if time.monotonic() > vence:
+            errores_por_archivo[nombre_archivo] = "Se acabó el tiempo del lote antes de llegar a este archivo."
+            continue
+        with cronometro.medir("ocr"):
+            ruta_pdf, _uso = _asegurar_buscable(ruta_pdf, carpeta_buscables)
+            hubo_ocr_lote = hubo_ocr_lote or _uso
         try:
             with cronometro.medir("abrir_pdf"):
                 documento = fitz.open(ruta_pdf)
@@ -1068,6 +1415,10 @@ def resaltar_por_cedula_sin_recortar(
                 "El PDF está protegido con contraseña. Quite la protección e inténtelo de nuevo."
             )
             continue
+        if documento.page_count > MAXIMO_PAGINAS_POR_PDF:
+            documento.close()
+            errores_por_archivo[nombre_archivo] = _demasiadas_paginas()
+            continue
 
         try:
             for pagina in documento:
@@ -1080,6 +1431,7 @@ def resaltar_por_cedula_sin_recortar(
                 with cronometro.medir("buscar_cedulas"):
                     coincidencias_pagina = list(_localizar_coincidencias_de_cedula(
                         pagina, palabras, y0s_cedulas_pagina, mapa_cedulas, mapa_id_a_cedula_real,
+                        mapa_nombres=mapa_nombres, verificar_nombre=_uso, cedulas_oficiales=cedulas_oficiales,
                     ))
                 cronometro.contar("filas_encontradas", len(coincidencias_pagina))
 
@@ -1118,6 +1470,7 @@ def resaltar_por_cedula_sin_recortar(
         "no_encontrados": no_encontrados,
         "errores_por_archivo": errores_por_archivo,
         "detalle_registros": detalle_registros,
+        "uso_ocr": hubo_ocr_lote,
         "tiempos": cronometro.resumen(),
     }
 
@@ -1178,6 +1531,16 @@ def _bordear_filas_excel(hoja) -> None:
     for fila in hoja.iter_rows(min_row=2, max_row=hoja.max_row):
         for celda in fila:
             celda.border = _BORDE_CELDA
+
+
+def _sin_formulas(libro) -> None:
+    """Los nombres y clientes vienen de los archivos subidos: uno que empiece con = se guardaría como fórmula y Excel lo
+    ejecutaría al abrir el resumen. Quedan como texto, tal cual."""
+    for hoja in libro:
+        for fila in hoja.iter_rows():
+            for celda in fila:
+                if celda.data_type == "f":
+                    celda.data_type = "s"
 
 
 def generar_excel_resumen(detalle_registros: list[dict]) -> bytes:
@@ -1244,6 +1607,7 @@ def generar_excel_resumen(detalle_registros: list[dict]) -> bytes:
     _autoajustar_columnas_excel(hoja_detalle)
 
     buffer = io.BytesIO()
+    _sin_formulas(libro)
     libro.save(buffer)
     return buffer.getvalue()
 

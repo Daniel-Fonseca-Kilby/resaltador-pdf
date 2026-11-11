@@ -8,6 +8,7 @@ import io
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -18,21 +19,27 @@ import zipfile
 from collections import defaultdict, deque
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import openpyxl
-from flask import Flask, after_this_request, jsonify, render_template, request, send_file
+from flask import Flask, Response, g, jsonify, render_template, request
 from werkzeug.exceptions import HTTPException
 
 from resaltado_pdf import (
     generar_excel_resumen,
     generar_pdf_resumen,
+    paginas_escaneadas_sin_leer,
+    paginas_leidas_con_ocr,
+    reiniciar_contador_ocr,
     resaltar_nombres_en_pdf,
     resaltar_nombres_y_recortar,
     resaltar_por_cedula_sin_recortar,
     resaltar_por_cedula_y_exportar_por_cliente,
 )
+
+from api import seguridad_web, sesion_vma
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -146,6 +153,133 @@ def _ip_supero_el_limite(ip: str) -> bool:
     return False
 
 
+# Inicio de sesión: con SESION_VMA_SECRETO (la misma clave del portal de servicios) solo entra quien inició sesión en el
+# portal, que deja la cookie vma_sesion para todas las apps del servidor. En cada pedido se le pregunta al portal, por
+# 127.0.0.1, quién es esa sesión (sesion_vma.ConsultaPortal recuerda la respuesta 30 segundos): una cuenta desactivada
+# o una sesión cerrada deja de entrar aquí en menos de un minuto. Sin la clave la app queda abierta como antes (Vercel,
+# desarrollo). PORTAL_PUERTO: dónde corre el portal en este mismo servidor (8080 por defecto). Además la cuenta tiene
+# que tener acceso a Planillas (id «planillas» en las herramientas del portal); si no, vuelve al portal.
+app.config["SESION_VMA_SECRETO"] = os.environ.get("SESION_VMA_SECRETO") or None
+app.config["PORTAL_PUERTO"] = int(os.environ.get("PORTAL_PUERTO") or 8080)
+app.config["CONSULTA_PORTAL"] = None  # se arma con el primer pedido (las pruebas ponen una de mentira)
+if app.config["SESION_VMA_SECRETO"]:
+    sesion_vma.revisar_secreto(app.config["SESION_VMA_SECRETO"])
+
+
+def revisar_configuracion() -> None:
+    seguridad_web.revisar_login_en_servidor(bool(app.config["SESION_VMA_SECRETO"]))
+
+
+revisar_configuracion()
+if _DEBUG_GUARDAR_SUBIDAS:
+    app.logger.warning("DEBUG_GUARDAR_SUBIDAS está encendido: se guardan copias de las planillas subidas (con datos de "
+                       "personas) en %s. Apágalo en producción.", _CARPETA_DEBUG_SUBIDAS)
+
+_HOST_VALIDO = re.compile(r"^[A-Za-z0-9.-]{1,253}$")
+_RUTAS_SIN_SESION = ("/salud", "/static/")  # la revisión del portal y del instalador, los estilos y JSZip
+SERVICIO_PORTAL = "planillas"  # el id de esta app en servicios.json del portal
+_CSP_SIN_HTML = seguridad_web.csp(estilos_en_linea=False)
+_MAXIMO_EXCEL_DESCOMPRIMIDO = 500 * 1024 * 1024  # un .xlsx es un ZIP: unos KB pueden inflarse a varios GB
+_RESERVADOS_WINDOWS = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
+_LARGO_MAXIMO_NOMBRE = 150
+
+
+def _nombre_seguro(subido: str | None) -> str:
+    """El nombre de un archivo subido, sin nada que lo saque de la carpeta temporal (../) ni que Windows interprete
+    distinto: «x.pdf:oculto» (flujo alternativo de NTFS) o «NUL.pdf» (un dispositivo). Lo normal queda igual."""
+    nombre = re.split(r"[\\/]", subido or "")[-1]
+    nombre = re.sub(r'[\x00-\x1f\x7f<>:"|?*]', "", nombre).strip(" .")
+    base, extension = os.path.splitext(nombre)
+    if base.lower() in _RESERVADOS_WINDOWS:
+        base = f"_{base}"
+    return f"{base[:_LARGO_MAXIMO_NOMBRE - len(extension)]}{extension}" or "archivo"
+
+
+def _es_pdf(archivo) -> bool:
+    """Por el nombre y por el contenido: un programa renombrado a .pdf no pasa."""
+    if not _nombre_seguro(archivo.filename).lower().endswith(".pdf"):
+        return False
+    inicio = archivo.stream.read(1024)
+    archivo.stream.seek(0)
+    return b"%PDF-" in inicio
+
+
+def _host() -> str:
+    """El nombre o IP con que se llegó a la app (sin puerto); si no es válido, localhost."""
+    host = urlsplit(f"//{request.host}").hostname or ""
+    host = host if _HOST_VALIDO.match(host) else "localhost"
+    return seguridad_web.host_permitido(host)
+
+
+@app.before_request
+def _rechazar_otro_origen():
+    """Con inicio de sesión, lo que manda datos solo se acepta desde la propia app: otra página abierta en el navegador
+    no puede subir ni procesar nada en nombre de quien tiene la sesión (CSRF)."""
+    if not app.config["SESION_VMA_SECRETO"] or request.method in ("GET", "HEAD", "OPTIONS"):
+        return None
+    origen = request.headers.get("Origin") or request.headers.get("Referer")
+    if seguridad_web.mismo_origen(origen, request.host):
+        return None
+    return jsonify(error="Este pedido viene de otro sitio."), 403
+
+
+@app.before_request
+def _exigir_sesion_del_portal():
+    secreto = app.config["SESION_VMA_SECRETO"]
+    if not secreto or request.path.startswith(_RUTAS_SIN_SESION):
+        return None
+    consulta = app.config["CONSULTA_PORTAL"]
+    if consulta is None:
+        consulta = app.config["CONSULTA_PORTAL"] = sesion_vma.ConsultaPortal(
+            sesion_vma.puerto_para_consultar(app.config["PORTAL_PUERTO"]), secreto)
+    # Los pedidos automáticos de la página (X-Sin-Actividad: 1) no alargan la sesión.
+    actividad = request.headers.get(sesion_vma.ENCABEZADO_SIN_ACTIVIDAD) != "1"
+    try:
+        g.persona = consulta.persona_de_encabezado(request.headers.get("Cookie"), actividad)
+    except sesion_vma.PortalNoResponde as error:
+        app.logger.warning("El portal no respondió la consulta de sesión: %s", error)
+        mensaje = "El portal de servicios no responde. Pruebe de nuevo en un momento."
+        if request.path.startswith("/api/"):
+            return jsonify(error=mensaje), 503
+        return Response(mensaje, status=503, mimetype="text/plain")
+    if g.persona and not sesion_vma.puede_entrar(g.persona, SERVICIO_PORTAL):
+        if request.path.startswith("/api/"):
+            return jsonify(error="Tu cuenta no tiene acceso a Planillas. Pídeselo a un administrador del portal."), 403
+        return Response(status=302, headers={
+            "Location": sesion_vma.url_sin_acceso(_host(), app.config["PORTAL_PUERTO"], SERVICIO_PORTAL)})
+    if g.persona:
+        return None
+    if request.path.startswith("/api/"):
+        return jsonify(error="La sesión venció. Inicie sesión de nuevo en el portal de servicios."), 401
+    # El portal solo devuelve a direcciones de este mismo servidor; lo revisa él. El host va por _host() (lista
+    # blanca), no el del pedido, para no reflejar un Host falso en la dirección de vuelta.
+    if request.method == "GET":
+        puerto = urlsplit(f"//{request.host}").port
+        destino_host = f"{_host()}:{puerto}" if puerto else _host()
+        volver = f"{sesion_vma.esquema()}://{destino_host}{request.full_path.rstrip('?')}"
+    else:
+        volver = ""
+    return Response(status=302, headers={"Location": sesion_vma.url_entrar(_host(), app.config["PORTAL_PUERTO"], volver)})
+
+
+@app.after_request
+def _encabezados_de_seguridad(respuesta: Response) -> Response:
+    """Los encabezados de seguridad comunes de las apps de Grupo VMA (api/seguridad_web.py). La CSP de cada página
+    admite justo sus scripts: los archivos de /static y los escritos en la plantilla, por su hash. La página y la API
+    van sin caché (traen datos de personas)."""
+    for nombre, valor in seguridad_web.encabezados():
+        respuesta.headers.setdefault(nombre, valor)
+    respuesta.headers["Server"] = "Planillas"  # sin la versión de Werkzeug/Python
+    if respuesta.mimetype == "text/html" and not respuesta.is_streamed:
+        politica = seguridad_web.csp(respuesta.get_data(as_text=True), estilos_en_linea=False)
+    else:
+        politica = _CSP_SIN_HTML
+    respuesta.headers.setdefault("Content-Security-Policy", politica)
+    if request.path == "/" or request.path.startswith("/api/"):
+        respuesta.headers.setdefault("Cache-Control", "no-store")
+    return respuesta
+
+
 @app.before_request
 def _limitar_solicitudes_api():
     if request.path not in _RUTAS_CON_LIMITE:
@@ -159,9 +293,42 @@ def _limitar_solicitudes_api():
     return None
 
 
+def _enviar_zip_y_borrar(ruta: Path, nombre_descarga: str) -> Response:
+    """Envía el ZIP temporal por partes y lo borra cuando la respuesta se cierra (ya enviada, con el archivo cerrado).
+
+    No se usa send_file: cuando el servidor sabe enviar archivos por su cuenta (waitress en Windows, gunicorn en
+    Linux), Flask le pasa el archivo directo y nunca avisa cuándo terminó, así que no había cuándo borrarlo; y
+    borrarlo antes falla en Windows mientras está abierto (WinError 32). Así sirve igual en los dos sistemas y no
+    carga el ZIP entero en memoria."""
+    def contenido():
+        with open(ruta, "rb") as archivo:
+            while bloque := archivo.read(256 * 1024):
+                yield bloque
+
+    def borrar():
+        try:
+            ruta.unlink(missing_ok=True)
+        except OSError as error:  # no debería pasar; un ZIP temporal que queda no justifica romper la descarga
+            app.logger.warning("No se pudo borrar el ZIP temporal %s: %s", ruta, error)
+
+    respuesta = Response(contenido(), mimetype="application/zip")
+    respuesta.headers["Content-Disposition"] = f'attachment; filename="{nombre_descarga}"'
+    respuesta.headers["Content-Length"] = str(ruta.stat().st_size)
+    respuesta.call_on_close(borrar)  # corre después de cerrar contenido(), o aunque nunca se haya empezado a enviar
+    return respuesta
+
+
 @app.route("/", methods=["GET"])
 def index():
-    return render_template("index.html")
+    persona = g.get("persona")
+    salir = sesion_vma.url_salir(_host(), app.config["PORTAL_PUERTO"]) if persona else None
+    portal = sesion_vma.url_portal(_host(), app.config["PORTAL_PUERTO"]) if persona else None
+    return render_template("index.html", persona=persona, salir=salir, portal=portal)
+
+
+@app.route("/salud", methods=["GET"])
+def salud():
+    return jsonify(estado="ok")
 
 
 @app.errorhandler(Exception)
@@ -174,14 +341,48 @@ def _manejar_error(error):
     return jsonify(error="Ocurrió un error inesperado al procesar la solicitud."), 500
 
 
+def _excel_no_se_pudo_leer(archivo) -> ValueError:
+    return ValueError(
+        f"El archivo Excel '{_nombre_seguro(archivo.filename)}' no se pudo leer. "
+        "Verifique que sea un .xlsx válido y no esté dañado."
+    )
+
+
+def _trae_doctype(contenido) -> bool:
+    """Por partes y hasta el final: se podría esconder detrás de un comentario largo."""
+    anterior = b""
+    while bloque := contenido.read(64 * 1024):
+        if b"<!DOCTYPE" in (anterior + bloque).upper():
+            return True
+        anterior = bloque[-8:]
+    return False
+
+
+def _revisar_excel(archivo) -> None:
+    """Antes de abrirlo: que no se infle de más al descomprimirlo y que su XML no traiga un DOCTYPE, que un Excel real
+    no usa y es por donde entran los ataques de entidades XML. Si ni siquiera es un ZIP, lo dirá openpyxl."""
+    try:
+        with zipfile.ZipFile(archivo) as libro:
+            partes = libro.infolist()
+            if sum(parte.file_size for parte in partes) > _MAXIMO_EXCEL_DESCOMPRIMIDO:
+                raise ValueError(f"El archivo Excel '{_nombre_seguro(archivo.filename)}' es demasiado grande.")
+            for parte in partes:
+                if parte.filename.lower().endswith((".xml", ".rels")):
+                    with libro.open(parte) as contenido:
+                        if _trae_doctype(contenido):
+                            raise _excel_no_se_pudo_leer(archivo)
+    except (zipfile.BadZipFile, RuntimeError, NotImplementedError):
+        pass
+    finally:
+        archivo.seek(0)
+
+
 def _abrir_libro(archivo):
+    _revisar_excel(archivo)
     try:
         return openpyxl.load_workbook(archivo, read_only=True, data_only=True)
     except Exception:
-        raise ValueError(
-            f"El archivo Excel '{archivo.filename}' no se pudo leer. "
-            "Verifique que sea un .xlsx válido y no esté dañado."
-        )
+        raise _excel_no_se_pudo_leer(archivo)
 
 
 def _decodificar_csv(contenido_bytes: bytes) -> str:
@@ -204,7 +405,7 @@ def _detectar_delimitador(texto: str) -> str:
 
 def _filas_desde_archivo(archivo):
     
-    nombre = Path(archivo.filename).name.lower()
+    nombre = _nombre_seguro(archivo.filename).lower()
     archivo.seek(0)
 
     if nombre.endswith((".xlsx", ".xlsm")):
@@ -389,7 +590,7 @@ def _nombre_zip_sin_colision(nombre: str, nombres_usados: set) -> str:
 
 
 def _procesar_modo_simple(nombres: list[str], archivos):
-
+    reiniciar_contador_ocr()
     coincidencias_por_archivo: dict[str, dict] = {}
     errores_por_archivo: dict[str, str] = {}
     nombres_zip_usados: set[str] = set()
@@ -405,8 +606,8 @@ def _procesar_modo_simple(nombres: list[str], archivos):
     try:
         with zipfile.ZipFile(ruta_zip, "w", zipfile.ZIP_DEFLATED) as zf:
             for i, archivo in enumerate(archivos):
-                nombre_archivo = Path(archivo.filename).name
-                if not nombre_archivo.lower().endswith(".pdf"):
+                nombre_archivo = _nombre_seguro(archivo.filename)
+                if not _es_pdf(archivo):
                     errores_por_archivo[nombre_archivo] = "No es un archivo PDF."
                     continue
                 ruta_entrada = carpeta_temporal / f"{i}_{nombre_archivo}"
@@ -463,21 +664,13 @@ def _procesar_modo_simple(nombres: list[str], archivos):
     tiempos_lote.setdefault("conteos", {})["nombres"] = len(nombres)
     _registrar_tiempos("simple", fases, tiempos_lote, bytes_subidos, ruta_zip.stat().st_size)
 
-    @after_this_request
-    def _borrar_zip_temporal(response):
-        ruta_zip.unlink(missing_ok=True)
-        return response
-
-    respuesta = send_file(
-        str(ruta_zip),
-        mimetype="application/zip",
-        as_attachment=True,
-        download_name="pdfs_resaltados.zip",
-    )
+    respuesta = _enviar_zip_y_borrar(ruta_zip, "pdfs_resaltados.zip")
     respuesta.headers["X-Modo"] = "simple"
     respuesta.headers["X-Total-Archivos"] = str(total_archivos_ok)
     respuesta.headers["X-Total-Errores"] = str(total_errores)
     respuesta.headers["X-Total-Coincidencias"] = str(total_coincidencias)
+    respuesta.headers["X-Paginas-OCR"] = str(paginas_leidas_con_ocr())
+    respuesta.headers["X-Paginas-Escaneadas-Sin-Leer"] = str(paginas_escaneadas_sin_leer())
     return respuesta
 
 
@@ -486,6 +679,7 @@ def _procesar_modo_simple_recortado(nombres: list[str], archivos, formato: str, 
     aparece cada nombre (de todas las planillas), con su encabezado y su
     pie de póliza -ver resaltar_nombres_y_recortar. Con "Solo resaltar"
     marcado se usa _procesar_modo_simple (el PDF completo, solo resaltado)."""
+    reiniciar_contador_ocr()
     errores_por_archivo: dict[str, str] = {}
     fases: dict[str, float] = {}
     bytes_subidos = 0
@@ -502,8 +696,8 @@ def _procesar_modo_simple_recortado(nombres: list[str], archivos, formato: str, 
         nombres_vistos: set[str] = set()
         inicio = time.perf_counter()
         for i, archivo in enumerate(archivos):
-            nombre_archivo = Path(archivo.filename).name
-            if not nombre_archivo.lower().endswith(".pdf"):
+            nombre_archivo = _nombre_seguro(archivo.filename)
+            if not _es_pdf(archivo):
                 errores_por_archivo[nombre_archivo] = "No es un archivo PDF."
                 continue
             ruta = carpeta_entrada / f"{i}_{nombre_archivo}"
@@ -575,21 +769,13 @@ def _procesar_modo_simple_recortado(nombres: list[str], archivos, formato: str, 
     tiempos_lote.setdefault("conteos", {}).update(nombres=len(nombres), pdfs=len(rutas_entrada))
     _registrar_tiempos("simple_recortado", fases, tiempos_lote, bytes_subidos, ruta_zip.stat().st_size)
 
-    @after_this_request
-    def _borrar_zip_temporal(response):
-        ruta_zip.unlink(missing_ok=True)
-        return response
-
-    respuesta = send_file(
-        str(ruta_zip),
-        mimetype="application/zip",
-        as_attachment=True,
-        download_name="nombres_recortados.zip",
-    )
+    respuesta = _enviar_zip_y_borrar(ruta_zip, "nombres_recortados.zip")
     respuesta.headers["X-Modo"] = "simple_recortado"
     respuesta.headers["X-Total-Archivos"] = str(total_archivos_ok)
     respuesta.headers["X-Total-Errores"] = str(len(errores_por_archivo))
     respuesta.headers["X-Total-Coincidencias"] = str(total_coincidencias)
+    respuesta.headers["X-Paginas-OCR"] = str(paginas_leidas_con_ocr())
+    respuesta.headers["X-Paginas-Escaneadas-Sin-Leer"] = str(paginas_escaneadas_sin_leer())
     return respuesta
 
 
@@ -603,6 +789,7 @@ _LIMITE_BYTES_NO_ENCONTRADOS_HEADER = 4000
 def _procesar_modo_cliente(
     registros: list[dict], archivos, formato: str, resaltar_filas: bool = True, solo_resaltar: bool = False,
 ):
+    reiniciar_contador_ocr()
     fases: dict[str, float] = {}
     inicio_total = time.perf_counter()
     carpeta_temporal = Path(tempfile.mkdtemp(prefix="resaltado_cliente_"))
@@ -616,8 +803,8 @@ def _procesar_modo_cliente(
         bytes_subidos = 0
         inicio = time.perf_counter()
         for i, archivo in enumerate(archivos):
-            nombre_archivo = Path(archivo.filename).name
-            if not nombre_archivo.lower().endswith(".pdf"):
+            nombre_archivo = _nombre_seguro(archivo.filename)
+            if not _es_pdf(archivo):
                 pdfs_invalidos.append(nombre_archivo)
                 continue
 
@@ -701,21 +888,13 @@ def _procesar_modo_cliente(
         fases, tiempos_lote, bytes_subidos, ruta_zip.stat().st_size,
     )
 
-    @after_this_request
-    def _borrar_zip_temporal(response):
-        ruta_zip.unlink(missing_ok=True)
-        return response
-
-    respuesta = send_file(
-        str(ruta_zip),
-        mimetype="application/zip",
-        as_attachment=True,
-        download_name="pdfs_resaltados_sin_recorte.zip" if solo_resaltar else "pdfs_por_cliente.zip",
-    )
+    respuesta = _enviar_zip_y_borrar(ruta_zip, "pdfs_resaltados_sin_recorte.zip" if solo_resaltar else "pdfs_por_cliente.zip")
     respuesta.headers["X-Modo"] = "cliente_sin_recorte" if solo_resaltar else "cliente"
     respuesta.headers["X-Total-Clientes"] = str(total_archivos_generados)
     respuesta.headers["X-Total-Errores"] = str(len(errores_archivos))
     respuesta.headers["X-Total-No-Encontrados"] = str(len(no_encontrados))
+    respuesta.headers["X-Paginas-OCR"] = str(paginas_leidas_con_ocr())
+    respuesta.headers["X-Paginas-Escaneadas-Sin-Leer"] = str(paginas_escaneadas_sin_leer())
 
     if no_encontrados:
         no_encontrados_b64 = base64.b64encode(json.dumps(no_encontrados).encode("utf-8")).decode("ascii")
@@ -732,7 +911,7 @@ def procesar():
 
     app.logger.info(
         "solicitud recibida: %d PDF(s), excel=%s",
-        len(archivos), archivo_excel.filename if archivo_excel else "no",
+        len(archivos), _nombre_seguro(archivo_excel.filename) if archivo_excel else "no",
     )
 
     if not archivos:
@@ -777,4 +956,4 @@ def procesar():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run()  # para depurar en la PC: flask --app api.index run --debug (nunca en el servidor)

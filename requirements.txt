@@ -1,4 +1,6 @@
-flask
-pymupdf
-gunicorn
-openpyxl
+flask==3.1.3
+pymupdf==1.28.2  # versión probada; subirla a propósito y correr las pruebas antes
+gunicorn==23.0.0; sys_platform != "win32"  # servidor web en Linux (Procfile); en Windows no hace falta
+openpyxl==3.1.5
+defusedxml==0.7.1  # con esto instalado, openpyxl rechaza las entidades XML de un Excel
+waitress==3.0.2  # servidor web en Windows (JUPITER); en Linux se sigue usando gunicorn

@@ -65,6 +65,25 @@ def test_procesar_excel_no_valido_devuelve_400(cliente_flask, ruta_pdf_ejemplo):
     assert "Excel" in respuesta.get_json()["error"]
 
 
+def test_procesar_borra_el_zip_temporal_al_terminar_la_descarga(cliente_flask, ruta_pdf_ejemplo, tmp_path, monkeypatch):
+    """El ZIP de la respuesta se borra cuando termina de enviarse. En Windows (JUPITER) no se puede borrar un
+    archivo abierto, y con send_file el servidor lo envía directo sin avisar cuándo terminó: los ZIP quedaban."""
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    datos = {
+        "nombres": "Juan Perez",
+        "solo_resaltar": "true",
+        "pdfs": (_abrir_pdf(ruta_pdf_ejemplo), "planilla.pdf"),
+    }
+
+    respuesta = cliente_flask.post("/api/procesar", data=datos, content_type="multipart/form-data")
+
+    assert respuesta.status_code == 200
+    assert zipfile.ZipFile(io.BytesIO(respuesta.data)).namelist()  # llega completo y se puede abrir
+    assert respuesta.headers["Content-Length"] == str(len(respuesta.data))
+    respuesta.close()
+    assert list(tmp_path.glob("resaltado_*.zip")) == []
+
+
 def test_procesar_modo_simple_devuelve_zip(cliente_flask, ruta_pdf_ejemplo):
     datos = {
         "nombres": "Juan Perez",

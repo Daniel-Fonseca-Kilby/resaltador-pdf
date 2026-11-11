@@ -1,0 +1,99 @@
+/* Librería visual de Grupo VMA · versión 1.3.0
+   Colores y medidas del libro de marca de Grupo VMA (ene. 2025), como variables CSS.
+
+   - Tema claro en :root; tema oscuro con la clase .dark en <html> (convención de next-themes, Tailwind y shadcn) o
+     con data-theme="dark" en <html> (apps sin framework). Los nombres semánticos (--background, --primary,
+     --card…) son los de shadcn: una app con Tailwind los toma tal cual.
+   - Los colores de marca (--vma-*) no se cambian en una app: si el libro cambia, se cambia aquí y se sincroniza
+     (marca/sincronizar.py). La prueba tests/test_marca.py comprueba los valores del libro y los contrastes. */
+
+:root {
+    /* --- Colores del libro de marca --------------------------------------------------------------------------- */
+    --vma-azul: #254258;     /* primario · Seguridad · Pantone 7477 C */
+    --vma-verde: #6b8e3c;    /* primario · Limpieza · Pantone 575 C */
+    --vma-naranja: #f05c30;  /* primario · Mensajería · Pantone 171 C */
+    --vma-acento: #b1d245;   /* secundario · verde acento · Pantone 2300 C */
+    --vma-beige: #bfb59d;    /* secundario · beige fondo · Pantone 453 C */
+
+    /* Color de cada unidad de negocio para íconos y detalles (3:1 o más sobre el fondo, WCAG para gráficos). */
+    --marca-seguridad: var(--vma-azul);
+    --marca-limpieza: var(--vma-verde);
+    --marca-mensajeria: var(--vma-naranja);
+
+    /* --- Tema claro ---------------------------------------------------------------------------------------------- */
+    --background: #f6f4ef;          /* beige muy claro, como las páginas del libro */
+    --foreground: #172430;
+    --card: #ffffff;
+    --card-foreground: #172430;
+    --popover: #ffffff;
+    --popover-foreground: #172430;
+    --primary: var(--vma-azul);     /* 10.5:1 con blanco */
+    --primary-foreground: #ffffff;
+    --secondary: #efece5;
+    --secondary-foreground: #172430;
+    --muted: #efece5;
+    --muted-foreground: #66635b;    /* 5:1 o más sobre fondo, tarjeta y muted */
+    --accent: #efece5;
+    --accent-foreground: #172430;
+    --border: #e3dfd5;
+    --input: #e3dfd5;
+    --ring: var(--vma-azul);
+
+    /* Estados: significan algo (bien, atención, error, información); no son colores de marca. */
+    --vma-estado-ok: #047857;
+    --vma-estado-aviso: #b45309;
+    --vma-estado-error: #be123c;
+    --vma-estado-info: #0369a1;
+
+    /* Contenedor de ícono sobre la banda azul o en tema oscuro: azul VMA aclarado para que se distinga. */
+    --vma-azul-claro: #34607f;
+
+    /* --- Forma ---------------------------------------------------------------------------------------------------- */
+    --vma-fuente: "Poppins", "Avenir Next", Avenir, system-ui, sans-serif;  /* libro: Poppins; si no, Avenir */
+    --vma-radio: 1.25rem;
+    --vma-radio-chico: 0.8rem;
+    --vma-sombra: 0 1px 2px rgba(23, 36, 48, 0.06), 0 8px 24px rgba(23, 36, 48, 0.06);
+    --vma-sombra-alta: 0 2px 4px rgba(23, 36, 48, 0.08), 0 16px 32px rgba(23, 36, 48, 0.10);
+    /* Brillo de fondo de la página: azul VMA arriba a la izquierda y verde acento abajo a la derecha. */
+    --vma-brillo:
+        radial-gradient(ellipse 60% 50% at 0% 0%, rgba(37, 66, 88, 0.08), transparent 60%),
+        radial-gradient(ellipse 60% 60% at 100% 100%, rgba(177, 210, 69, 0.12), transparent 60%);
+}
+
+/* Tema oscuro: azul VMA llevado a fondo oscuro y el verde acento como color principal (como en las piezas
+   digitales del libro: fondo azul con acento verde). Los colores de unidad se aclaran para leerse sobre oscuro. */
+.dark,
+[data-theme="dark"] {
+    --marca-seguridad: #8fb3d1;
+    --marca-limpieza: var(--vma-acento);
+    --marca-mensajeria: #f47a55;
+
+    --background: #0b1620;
+    --foreground: #e6edf3;
+    --card: rgba(21, 38, 53, 0.72);
+    --card-foreground: #e6edf3;
+    --popover: #12222f;
+    --popover-foreground: #e6edf3;
+    --primary: var(--vma-acento);   /* 10.6:1 sobre el fondo */
+    --primary-foreground: #0b1620;
+    --secondary: #152635;
+    --secondary-foreground: #e6edf3;
+    --muted: #152635;
+    --muted-foreground: #8b98a5;
+    --accent: #1b3043;
+    --accent-foreground: #e6edf3;
+    --border: rgba(255, 255, 255, 0.08);
+    --input: rgba(255, 255, 255, 0.12);
+    --ring: var(--vma-acento);
+
+    --vma-estado-ok: #34d399;
+    --vma-estado-aviso: #fbbf24;
+    --vma-estado-error: #fb7185;
+    --vma-estado-info: #38bdf8;
+
+    --vma-sombra: 0 10px 30px rgba(0, 0, 0, 0.35);
+    --vma-sombra-alta: 0 14px 36px rgba(0, 0, 0, 0.45);
+    --vma-brillo:
+        radial-gradient(ellipse 60% 50% at 0% 0%, rgba(37, 66, 88, 0.55), transparent 60%),
+        radial-gradient(ellipse 60% 60% at 100% 100%, rgba(177, 210, 69, 0.07), transparent 60%);
+}

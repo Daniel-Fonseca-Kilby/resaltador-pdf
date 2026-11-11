@@ -3,8 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>VMA Seguridad · Resaltador de Planillas</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2L4 5V11C4 16.5 7.4 20.7 12 22C16.6 20.7 20 16.5 20 11V5L12 2Z' fill='%23c9a34e'/%3E%3Cpath d='M9.5 12.2L11.3 14L14.8 10' stroke='%230a1f3d' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<title>Planillas · Grupo VMA</title>
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='vma/logos/favicon.png') }}">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='vma/logos/apple-touch-icon.png') }}">
+<meta name="theme-color" content="#254258">
+<!-- Librería visual de Grupo VMA (copia sincronizada de Proyecto Licitaciones/marca/vma: no editar static/vma/ aquí;
+     se cambia allá y se corre marca/sincronizar.py). Trae Poppins y los colores del libro de marca. -->
+<link rel="stylesheet" href="{{ url_for('static', filename='vma/css/vma-fuentes.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='vma/css/vma-tokens.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='vma/css/vma-componentes.css') }}">
 <script>
   // se aplica ANTES de pintar la página, para no mostrar un parpadeo de
   // modo claro justo antes de cambiar a oscuro si esa era la preferencia
@@ -22,62 +29,53 @@
   })();
 </script>
 <style>
+  /* Los colores de esta app salen de la librería visual de Grupo VMA (vma-tokens.css), que ya cambia sola con
+     data-theme="dark". Aquí solo se traducen a los nombres que usan los estilos de abajo. El «dorado» de antes
+     marcaba advertencias: ahora es el color de estado «atención» de la librería, no un color de marca. */
   :root {
-    --azul-oscuro: #0a1f3d;
-    --azul: #123a6b;
-    --azul-claro: #1c4d8f;
-    --azul-claro-fondo: #eef4fd;
-    --dorado: #c9a34e;
-    --dorado-fondo: #fbf3e2;
-    --dorado-texto: #8a6414;
-    --fondo: #f4f5f7;
-    --panel: #ffffff;
-    --superficie: #ffffff;
-    --superficie-sutil: #f3f5f9;
-    --texto: #23272f;
-    --texto-suave: #5a6472;
-    --texto-tenue: #8890a0;
-    --borde: #d7dbe3;
-    --verde: #1e8e5a;
-    --verde-fondo: #e8f6ef;
-    --rojo: #c0392b;
-    --rojo-fondo: #fbeceb;
-    --rojo-hover: #f6d9d6;
-    --boton-disabled-fondo: #c7ccd4;
-    --boton-disabled-texto: #7a828d;
-    --radio: 6px;
+    --azul-claro: var(--vma-azul-claro);     /* hover y bordes activos */
+    --azul-texto: var(--vma-azul);           /* texto en azul (no fondo de botón) */
+    --azul-claro-fondo: color-mix(in srgb, var(--vma-azul) 8%, transparent);
+    --dorado: var(--vma-estado-aviso);
+    --dorado-fondo: color-mix(in srgb, var(--vma-estado-aviso) 12%, transparent);
+    --dorado-texto: #92400e;                 /* 6:1 sobre --dorado-fondo */
+    --fondo: var(--background);
+    --panel: var(--card);
+    --superficie: var(--popover);
+    --superficie-sutil: var(--muted);
+    --texto: var(--foreground);
+    --texto-suave: var(--muted-foreground);
+    --texto-tenue: var(--muted-foreground);  /* el gris más claro no llegaba a 4.5:1 sobre los fondos beige */
+    --borde: var(--border);
+    --verde: var(--vma-estado-ok);
+    --verde-fondo: color-mix(in srgb, var(--vma-estado-ok) 12%, transparent);
+    --rojo: var(--vma-estado-error);
+    --rojo-fondo: color-mix(in srgb, var(--vma-estado-error) 12%, transparent);
+    --rojo-hover: color-mix(in srgb, var(--vma-estado-error) 20%, transparent);
+    --boton-disabled-fondo: #d6d1c4;
+    --boton-disabled-texto: #66635b;
+    --radio: var(--vma-radio);               /* paneles, como las tarjetas de Licitaciones */
+    --radio-control: 0.625rem;               /* campos, botones y elementos de lista */
   }
 
   html[data-theme="dark"] {
-    --azul: #3574d4;
-    --azul-claro: #559bf2;
-    --azul-claro-fondo: rgba(85, 155, 242, 0.14);
-    --dorado: #e0b862;
-    --dorado-fondo: rgba(224, 184, 98, 0.14);
-    --dorado-texto: #e8c880;
-    --fondo: #0b1120;
-    --panel: #141a2c;
-    --superficie: #1b2338;
-    --superficie-sutil: #202840;
-    --texto: #e8ebf1;
-    --texto-suave: #aab3c5;
-    --texto-tenue: #7d879c;
-    --borde: #262f45;
-    --verde: #3ecf8e;
-    --verde-fondo: rgba(62, 207, 142, 0.14);
-    --rojo: #f2685c;
-    --rojo-fondo: rgba(242, 104, 92, 0.14);
-    --rojo-hover: rgba(242, 104, 92, 0.22);
-    --boton-disabled-fondo: #2a3145;
-    --boton-disabled-texto: #5a6478;
+    --azul-claro: #3f7196;                   /* hover (blanco: 5.2:1) */
+    --azul-texto: var(--marca-seguridad);    /* azul claro de la librería: 8.3:1 sobre el fondo oscuro */
+    --azul-claro-fondo: rgba(143, 179, 209, 0.14);
+    --dorado-texto: #fcd34d;                 /* 8:1 sobre --dorado-fondo */
+    --texto-tenue: #8591a0;
+    --boton-disabled-fondo: #1b3043;
+    --boton-disabled-texto: #6b7a89;
   }
 
   * { box-sizing: border-box; }
 
   body {
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    font-family: var(--vma-fuente);  /* Poppins, la tipografía del libro de marca */
     margin: 0;
-    background: var(--fondo);
+    background-color: var(--fondo);
+    background-image: var(--vma-brillo);
+    background-attachment: fixed;
     color: var(--texto);
     transition: background-color 0.2s ease, color 0.2s ease;
   }
@@ -85,74 +83,17 @@
   .icono { width: 16px; height: 16px; flex-shrink: 0; }
   .icono-envoltura { display: inline-flex; flex-shrink: 0; }
 
-  header {
-    background: var(--azul-oscuro);
-    color: #fff;
-    border-bottom: 2px solid var(--dorado);
-  }
+  /* Quién entró (con la sesión del portal): nombre y rol a la izquierda de los botones, como en Licitaciones. */
+  .persona { min-width: 0; text-align: right; line-height: 1.3; }
+  .persona-nombre { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.875rem; font-weight: 500; margin: 0; }
+  .persona-rol { font-size: 0.75rem; color: var(--muted-foreground); margin: 0; }
 
-  .header-interior {
-    max-width: 720px;
-    margin: 0 auto;
-    padding: 16px 20px;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .logo-insignia {
-    flex-shrink: 0;
-    display: inline-flex;
-    align-items: center;
-    background: #fff;
-    border-radius: 6px;
-    padding: 4px 8px;
-  }
-
-  .logo-insignia img {
-    display: block;
-    height: 28px;
-    width: auto;
-  }
-
-  .header-texto { flex: 1; min-width: 0; }
-
-  .header-texto h1 {
-    font-size: 16px;
-    font-weight: 700;
-    margin: 0;
-  }
-
-  .header-texto p {
-    margin: 1px 0 0;
-    font-size: 12px;
-    color: #b9c4d6;
-  }
-
-  .boton-tema {
-    flex-shrink: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 34px;
-    height: 34px;
-    border-radius: 999px;
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    background: rgba(255, 255, 255, 0.08);
-    color: #fff;
-    cursor: pointer;
-    transition: background 0.15s ease;
-  }
-
-  .boton-tema:hover { background: rgba(255, 255, 255, 0.18); }
-  .boton-tema svg { width: 17px; height: 17px; }
-  .boton-tema .icono-luna { display: none; }
-  html[data-theme="dark"] .boton-tema .icono-sol { display: none; }
-  html[data-theme="dark"] .boton-tema .icono-luna { display: block; }
+  /* Encabezado: el de la librería visual (vma-encabezado), el mismo de Licitaciones. Aquí solo su ancho. */
+  .contenedor-encabezado { max-width: 720px; margin: 24px auto 0; padding: 0 20px; }
 
   main {
     max-width: 720px;
-    margin: 24px auto 48px;
+    margin: 20px auto 48px;
     padding: 0 20px;
   }
 
@@ -160,6 +101,8 @@
     background: var(--panel);
     border: 1px solid var(--borde);
     border-radius: var(--radio);
+    box-shadow: var(--vma-sombra);
+    backdrop-filter: blur(8px);
   }
 
   .campo {
@@ -171,7 +114,7 @@
 
   .campo label {
     display: block;
-    font-size: 12.5px;
+    font-size: 14px;
     font-weight: 600;
     color: var(--texto);
     margin-bottom: 3px;
@@ -179,17 +122,18 @@
 
   .campo .hint {
     margin: 0 0 10px;
-    font-size: 12px;
+    font-size: 12.5px;
     color: var(--texto-suave);
     line-height: 1.5;
   }
 
   input[type="text"] {
     width: 100%;
-    padding: 8px 10px;
+    min-height: 40px;
+    padding: 9px 12px;
     border: 1px solid var(--borde);
-    border-radius: 4px;
-    font-size: 13.5px;
+    border-radius: var(--radio-control);
+    font-size: 14px;
     font-family: inherit;
     background: var(--superficie);
     color: var(--texto);
@@ -197,10 +141,11 @@
 
   select {
     width: 100%;
-    padding: 8px 32px 8px 10px;
+    min-height: 40px;
+    padding: 9px 34px 9px 12px;
     border: 1px solid var(--borde);
-    border-radius: 4px;
-    font-size: 13.5px;
+    border-radius: var(--radio-control);
+    font-size: 14px;
     font-family: inherit;
     background-color: var(--superficie);
     color: var(--texto);
@@ -225,7 +170,7 @@
   .dropzone:focus-visible {
     outline: none;
     border-color: var(--azul-claro);
-    box-shadow: 0 0 0 2px rgba(28, 77, 143, 0.18);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--azul-claro) 25%, transparent);
   }
 
   input[type="file"] { display: none; }
@@ -244,7 +189,7 @@
     width: 16px;
     height: 16px;
     cursor: pointer;
-    accent-color: var(--azul);
+    accent-color: var(--primary);
   }
 
   .dropzone {
@@ -255,7 +200,7 @@
     padding: 14px 12px;
     background: var(--superficie-sutil);
     border: 1px dashed var(--borde);
-    border-radius: 4px;
+    border-radius: var(--radio-control);
     cursor: pointer;
     font-size: 13px;
     color: var(--texto-suave);
@@ -269,7 +214,7 @@
     background: var(--dorado-fondo);
   }
 
-  .dropzone strong { color: var(--azul); font-weight: 600; }
+  .dropzone strong { color: var(--azul-texto); font-weight: 600; }
 
   .archivo-elegido {
     display: flex;
@@ -277,8 +222,8 @@
     gap: 9px;
     padding: 8px 10px;
     background: var(--verde-fondo);
-    border: 1px solid #cfe9dc;
-    border-radius: 4px;
+    border: 1px solid color-mix(in srgb, var(--verde) 30%, transparent);
+    border-radius: var(--radio-control);
   }
 
   .archivo-elegido .icono-envoltura { color: var(--verde); }
@@ -308,13 +253,13 @@
     gap: 7px;
     margin-top: 8px;
     padding: 7px 10px;
-    border-radius: 4px;
+    border-radius: var(--radio-control);
     font-size: 12px;
     font-weight: 600;
   }
 
   .excel-modo-indicador.cargando { background: var(--superficie-sutil); color: var(--texto-tenue); font-weight: 500; }
-  .excel-modo-indicador.cliente { background: var(--azul-claro-fondo); color: var(--azul); }
+  .excel-modo-indicador.cliente { background: var(--azul-claro-fondo); color: var(--azul-texto); }
   .excel-modo-indicador.simple { background: var(--superficie-sutil); color: var(--texto-suave); }
   .excel-modo-indicador.error { background: var(--rojo-fondo); color: var(--rojo); }
 
@@ -325,7 +270,7 @@
     color: var(--rojo);
     cursor: pointer;
     padding: 3px;
-    border-radius: 4px;
+    border-radius: var(--radio-control);
     display: flex;
   }
 
@@ -353,7 +298,7 @@
     font-weight: 600;
     cursor: pointer;
     padding: 3px 5px;
-    border-radius: 4px;
+    border-radius: var(--radio-control);
   }
 
   .quitar-todos:hover { background: var(--rojo-fondo); }
@@ -375,7 +320,7 @@
     align-items: center;
     gap: 8px;
     padding: 5px 6px;
-    border-radius: 4px;
+    border-radius: var(--radio-control);
     font-size: 12px;
   }
 
@@ -407,18 +352,18 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
-    background: var(--azul);
-    color: #fff;
+    background: var(--primary);
+    color: var(--primary-foreground);
     border: none;
-    padding: 10px 16px;
-    font-size: 13.5px;
+    padding: 11px 16px;
+    font-size: 14px;
     font-family: inherit;
     font-weight: 600;
-    border-radius: 4px;
+    border-radius: var(--radio-control);
     cursor: pointer;
   }
 
-  button#btnProcesar:hover:not(:disabled) { background: var(--azul-claro); }
+  button#btnProcesar:hover:not(:disabled) { filter: brightness(1.08); }
 
   button#btnProcesar:disabled {
     background: var(--boton-disabled-fondo);
@@ -464,7 +409,7 @@
     align-items: center;
     gap: 8px;
     padding: 9px 12px;
-    border-radius: 4px;
+    border-radius: var(--radio-control);
     font-size: 13px;
     font-weight: 600;
   }
@@ -496,7 +441,7 @@
   .item-resultado {
     border: 1px solid var(--borde);
     border-left: 3px solid var(--borde);
-    border-radius: 4px;
+    border-radius: var(--radio-control);
     padding: 8px 12px;
     font-size: 12.5px;
   }
@@ -548,7 +493,7 @@
   .detalle-no-encontrados {
     border: 1px solid var(--borde);
     border-left: 3px solid var(--dorado);
-    border-radius: 4px;
+    border-radius: var(--radio-control);
     padding: 8px 12px;
     font-size: 12.5px;
   }
@@ -600,7 +545,7 @@
     justify-content: center;
     gap: 6px;
     padding: 6px 10px;
-    border-radius: 4px;
+    border-radius: var(--radio-control);
     font-size: 12px;
     font-weight: 600;
     font-family: inherit;
@@ -614,12 +559,12 @@
   .tarjeta-pdf-boton:disabled { cursor: default; opacity: 0.7; }
 
   .tarjeta-pdf-boton.primario {
-    background: var(--azul);
-    color: #fff;
-    border-color: var(--azul);
+    background: var(--primary);
+    color: var(--primary-foreground);
+    border-color: var(--primary);
   }
 
-  .tarjeta-pdf-boton.primario:hover:not(:disabled) { background: var(--azul-claro); }
+  .tarjeta-pdf-boton.primario:hover:not(:disabled) { filter: brightness(1.08); }
 
   #descarga {
     display: none;
@@ -628,17 +573,17 @@
     gap: 8px;
     margin-top: 12px;
     width: 100%;
-    background: var(--verde);
+    background: #047857;  /* verde oscuro fijo: el verde de estado del tema oscuro es claro y el blanco no se leería */
     color: #fff;
     padding: 9px 16px;
-    border-radius: 4px;
+    border-radius: var(--radio-control);
     font-weight: 600;
     font-size: 13px;
     text-decoration: none;
     box-sizing: border-box;
   }
 
-  #descarga:hover { background: #176b45; }
+  #descarga:hover { background: #065f46; }
 
   footer {
     text-align: center;
@@ -652,7 +597,7 @@
   }
 
   /* --- Novedades ------------------------------------------------------ */
-  .boton-tema.boton-novedades { position: relative; }
+  .boton-novedades { position: relative; }
   .boton-novedades .punto-novedad {
     display: none;
     position: absolute;
@@ -662,7 +607,7 @@
     height: 8px;
     border-radius: 999px;
     background: var(--dorado);
-    box-shadow: 0 0 0 2px var(--azul-oscuro);
+    box-shadow: 0 0 0 2px var(--card);
   }
   .boton-novedades.tiene-novedad .punto-novedad { display: block; }
 
@@ -697,7 +642,7 @@
     color: var(--texto-suave);
     cursor: pointer;
     padding: 2px;
-    border-radius: 4px;
+    border-radius: var(--radio-control);
   }
   .novedades-cerrar:hover { color: var(--texto); background: var(--superficie-sutil); }
   .novedades-cerrar svg { width: 16px; height: 16px; }
@@ -734,33 +679,60 @@
 </style>
 </head>
 <body>
-  <header>
-    <div class="header-interior">
-      <span class="logo-insignia">
-        <img src="{{ url_for('static', filename='logo-vma.png') }}" alt="VMA Grupo">
-      </span>
-      <div class="header-texto">
-        <h1>VMA Seguridad</h1>
-        <p>Resaltador de Planillas en PDF</p>
+  <div class="contenedor-encabezado">
+    <!-- Encabezado de app de la librería visual de Grupo VMA: el mismo de Licitaciones. -->
+    <header class="vma-encabezado">
+      <div class="vma-encabezado-marca">
+        <div class="vma-encabezado-logo">
+          <img class="vma-solo-claro" src="{{ url_for('static', filename='vma/logos/logo-vma.png') }}" alt="Grupo VMA">
+          <img class="vma-solo-oscuro" src="{{ url_for('static', filename='vma/logos/logo-vma-blanco.png') }}" alt="Grupo VMA">
+        </div>
+        <div>
+          <h1 class="vma-encabezado-titulo">Planillas</h1>
+          <p class="vma-encabezado-sub">
+            <span class="vma-encabezado-etiqueta">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg>
+              Resaltador de planillas
+            </span>
+            <span class="vma-encabezado-sep" aria-hidden="true">·</span>
+            <span>Seguridad · CCSS, MNK e INS</span>
+          </p>
+        </div>
       </div>
-      <button type="button" class="boton-tema boton-novedades" id="btnNovedades" title="Ver novedades" aria-label="Ver novedades de la herramienta" aria-controls="novedades">
+      <div class="vma-encabezado-acciones">
+        {% if persona %}
+        <div class="persona">
+          <p class="persona-nombre" title="{{ persona.usuario }}">{{ persona.nombre }}</p>
+          <p class="persona-rol">{{ "Administrador" if persona.rol == "admin" else "Equipo" }}</p>
+        </div>
+        <a class="vma-boton vma-boton--icono" href="{{ portal }}" title="Portal de servicios" aria-label="Volver al portal de servicios">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
+        </a>
+        {% endif %}
+        <button type="button" class="vma-boton vma-boton--icono boton-novedades" id="btnNovedades" title="Ver novedades" aria-label="Ver novedades de la herramienta" aria-controls="novedades">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/>
         </svg>
         <span class="punto-novedad"></span>
       </button>
-      <button type="button" class="boton-tema" id="btnTema" title="Cambiar a modo oscuro" aria-label="Cambiar entre modo claro y oscuro">
-        <svg class="icono-sol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="4"/>
-          <path d="M12 2v2"/><path d="M12 20v2"/><path d="M4.93 4.93l1.41 1.41"/><path d="M17.66 17.66l1.41 1.41"/>
-          <path d="M2 12h2"/><path d="M20 12h2"/><path d="M6.34 17.66l-1.41 1.41"/><path d="M19.07 4.93l-1.41 1.41"/>
-        </svg>
-        <svg class="icono-luna" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
-        </svg>
-      </button>
-    </div>
-  </header>
+        <button type="button" class="vma-boton vma-boton--icono" id="btnTema" title="Cambiar a modo oscuro" aria-label="Cambiar entre modo claro y oscuro">
+          <svg class="vma-solo-claro" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
+          </svg>
+          <svg class="vma-solo-oscuro" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2"/><path d="M12 20v2"/><path d="M4.93 4.93l1.41 1.41"/><path d="M17.66 17.66l1.41 1.41"/>
+            <path d="M2 12h2"/><path d="M20 12h2"/><path d="M6.34 17.66l-1.41 1.41"/><path d="M19.07 4.93l-1.41 1.41"/>
+          </svg>
+        </button>
+        {% if persona %}
+        <a class="vma-boton vma-boton--icono" href="{{ salir }}" title="Salir" aria-label="Salir">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/></svg>
+        </a>
+        {% endif %}
+      </div>
+    </header>
+  </div>
 
   <main>
     <section class="novedades" id="novedades" hidden aria-labelledby="novedadesTitulo">
@@ -883,7 +855,8 @@
 
   <footer>Grupo VMA · Sistema interno de planillas</footer>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<!-- JSZip 3.10.1 (MIT), servido desde aquí: sin depender de un CDN de internet -->
+<script src="{{ url_for('static', filename='vendor/jszip.min.js') }}"></script>
 <script>
 // --- Modo oscuro ---------------------------------------------------------
 // El atributo data-theme ya se aplicó (si hacía falta) desde el <script>
@@ -1565,6 +1538,26 @@ btn.addEventListener("click", async () => {
       const totalCoincidencias = Number(respuesta.headers.get("X-Total-Coincidencias") || 0);
       console.log(`[resaltador] listo: modo=simple, ${totalArchivos} archivo(s), ${totalCoincidencias} coincidencia(s), ${totalErrores} error(es)`);
       mostrarResultadoSimpleResumen(totalArchivos, totalErrores, totalCoincidencias, modo === "simple_recortado");
+    }
+
+    // Aviso si algún archivo venía escaneado y se leyó con OCR (vale para todos los modos).
+    const paginasOcr = Number(respuesta.headers.get("X-Paginas-OCR") || 0);
+    if (paginasOcr > 0) {
+      resultado.appendChild(nodoConIcono(
+        ICONS.alerta,
+        `Uno o más archivos estaban escaneados: se leyeron con OCR (${paginasOcr} página(s)). La lectura automática puede no ser perfecta; conviene revisar esos resultados.`,
+        "resultado-resumen advertencia"
+      ));
+    }
+
+    // Aviso FUERTE: páginas escaneadas que ni el OCR pudo leer -ahí es seguro que faltan oficiales, hay que revisar a mano.
+    const escaneadasSinLeer = Number(respuesta.headers.get("X-Paginas-Escaneadas-Sin-Leer") || 0);
+    if (escaneadasSinLeer > 0) {
+      resultado.appendChild(nodoConIcono(
+        ICONS.alerta,
+        `Atención: ${escaneadasSinLeer} página(s) venían escaneadas y no se pudieron leer, ni siquiera con OCR (escaneo de baja calidad). En esas páginas es muy probable que falte resaltar a algún oficial: revíselas a mano.`,
+        "resultado-resumen error"
+      ));
     }
 
     // el zip llega directo en el cuerpo de la respuesta, sin JSON ni base64 de por medio

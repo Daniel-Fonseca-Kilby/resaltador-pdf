@@ -8,3 +8,9 @@ venv/
 CLAUDE.md
 .claude/
 graphify-out/
+
+# Tesseract portable del OCR (motor + idioma, ~178 MB; viaja en el paquete, no en el repo)
+tesseract/
+
+# paquetes para instalar en el servidor (servidor/empaquetar.ps1)
+paquetes/

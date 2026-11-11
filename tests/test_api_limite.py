@@ -83,7 +83,7 @@ def test_el_candado_de_pymupdf_queda_libre_despues_de_procesar():
 
     respuesta = _cliente.post(
         "/api/procesar",
-        data={"nombres": "JUAN PEREZ", "pdfs": (io.BytesIO(b"esto no es un pdf"), "roto.pdf")},
+        data={"nombres": "JUAN PEREZ", "pdfs": (io.BytesIO(b"%PDF-1.7 pero roto por dentro"), "roto.pdf")},
         content_type="multipart/form-data",
         environ_base={"REMOTE_ADDR": "10.0.0.8"},
     )

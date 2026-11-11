@@ -1,0 +1,242 @@
+/* Librería visual de Grupo VMA · versión 1.3.0
+   Componentes en CSS puro (sin frameworks), con prefijo vma- para no chocar con los estilos de cada app.
+   Necesita vma-tokens.css (colores) y vma-fuentes.css (Poppins). Ver el catálogo: marca/catalogo.html. */
+
+/* --- Página ----------------------------------------------------------------------------------------------------- */
+.vma-pagina {
+    margin: 0;
+    min-height: 100vh;
+    font-family: var(--vma-fuente);
+    color: var(--foreground);
+    background-color: var(--background);
+    background-image: var(--vma-brillo);
+    background-attachment: fixed;
+}
+.vma-pagina *, .vma-pagina *::before, .vma-pagina *::after { box-sizing: border-box; }
+.vma-pagina :focus-visible { outline: 3px solid var(--ring); outline-offset: 3px; border-radius: 0.5rem; }
+.vma-contenedor { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+
+/* Mostrar algo solo en un tema (p. ej. el logo azul en claro y el blanco en oscuro). */
+.vma-solo-oscuro { display: none !important; }
+.dark .vma-solo-claro, [data-theme="dark"] .vma-solo-claro { display: none !important; }
+.dark .vma-solo-oscuro, [data-theme="dark"] .vma-solo-oscuro { display: revert !important; }
+
+/* --- Logo ----------------------------------------------------------------------------------------------------------
+   El libro solo permite el logo sobre blanco, beige o azul VMA, sin girarlo, deformarlo ni cambiarle el color, y con
+   un margen de al menos la altura de su letra A. En tema oscuro va blanco dentro de un recuadro azul VMA. */
+.vma-logo { display: inline-flex; align-items: center; gap: 14px; text-decoration: none; color: inherit; }
+.vma-logo-caja { display: inline-block; padding: 4px; border-radius: 0.9rem; }
+.dark .vma-logo-caja, [data-theme="dark"] .vma-logo-caja { background: var(--vma-azul); padding: 7px 9px; }
+.vma-logo img { display: block; height: 44px; width: auto; }
+.dark .vma-logo img, [data-theme="dark"] .vma-logo img { height: 38px; }
+.vma-logo-texto { border-left: 1px solid var(--border); padding-left: 14px; line-height: 1.2; }
+.vma-logo-texto strong { display: block; font-size: 1.05rem; font-weight: 700; }
+.vma-logo-texto span { font-size: 0.8rem; color: var(--muted-foreground); }
+
+/* --- Encabezado de app: tarjeta con logo, nombre de la app, para qué sirve y acciones a la derecha ----------------
+   El mismo en todas las apps internas (Licitaciones, Planillas…), para que se reconozcan como de la misma familia.
+   <header class="vma-encabezado">
+     <div class="vma-encabezado-marca">
+       <div class="vma-encabezado-logo"><img class="vma-solo-claro" …logo-vma.png><img class="vma-solo-oscuro" …logo-vma-blanco.png></div>
+       <div><h1 class="vma-encabezado-titulo">App</h1>
+            <p class="vma-encabezado-sub"><span class="vma-encabezado-etiqueta"><svg…>Función</span>
+               <span class="vma-encabezado-sep" aria-hidden="true">·</span><span>detalle</span></p></div>
+     </div>
+     <div class="vma-encabezado-acciones">…botones vma-boton--icono…</div>
+   </header> */
+.vma-encabezado {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 16px 20px; border-radius: 1.5rem; border: 1px solid var(--border);
+    background: var(--card); color: var(--card-foreground); box-shadow: var(--vma-sombra); backdrop-filter: blur(8px);
+}
+.vma-encabezado-marca { display: flex; align-items: center; gap: 16px; min-width: 0; }
+.vma-encabezado-logo { flex-shrink: 0; padding: 6px; border-radius: 0.75rem; line-height: 0; }
+.vma-encabezado-logo img { height: 44px; width: auto; }
+.dark .vma-encabezado-logo, [data-theme="dark"] .vma-encabezado-logo { background: var(--vma-azul); padding: 8px; }
+.dark .vma-encabezado-logo img, [data-theme="dark"] .vma-encabezado-logo img { height: 40px; }
+.vma-encabezado-titulo { margin: 0; font-size: 1.25rem; line-height: 1.2; font-weight: 800; letter-spacing: -0.01em; }
+.vma-encabezado-sub {
+    margin: 4px 0 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px 8px;
+    font-size: 0.875rem; line-height: 1.4; color: var(--muted-foreground);
+}
+.vma-encabezado-sep { display: none; }
+.vma-encabezado-etiqueta { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; color: var(--primary); }
+.vma-encabezado-etiqueta svg { width: 1rem; height: 1rem; flex-shrink: 0; }
+.vma-encabezado-acciones { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+@media (min-width: 640px) {
+    .vma-encabezado { padding: 16px 24px; }
+    .vma-encabezado-titulo { font-size: 1.5rem; }
+    .vma-encabezado-sub { flex-direction: row; flex-wrap: wrap; align-items: center; }
+    .vma-encabezado-sep { display: inline; }
+}
+
+/* --- Barra superior ------------------------------------------------------------------------------------------------ */
+.vma-barra { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 0; }
+.vma-usuario { display: flex; align-items: center; gap: 10px; }
+.vma-usuario-nombre { text-align: right; line-height: 1.2; font-size: 0.875rem; font-weight: 600; }
+.vma-usuario-nombre span { display: block; font-size: 0.75rem; font-weight: 400; color: var(--muted-foreground); }
+.vma-iniciales {
+    width: 40px; height: 40px; border-radius: 999px; display: grid; place-items: center;
+    font-weight: 700; font-size: 0.85rem; background: var(--vma-azul); color: #fff;
+}
+
+/* --- Botones ----------------------------------------------------------------------------------------------------- */
+.vma-boton {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 16px;
+    border-radius: var(--vma-radio-chico); border: 1px solid transparent; font: inherit; font-size: 0.9rem;
+    font-weight: 600; text-decoration: none; cursor: pointer; transition: filter 0.15s ease;
+}
+.vma-boton:hover { filter: brightness(1.08); }
+.vma-boton svg { width: 1.1em; height: 1.1em; flex-shrink: 0; }   /* un SVG sin tamaño se encoge a cero en un flex */
+.vma-boton--primario { background: var(--primary); color: var(--primary-foreground); }
+.vma-boton--secundario { background: var(--card); color: var(--foreground); border-color: var(--border); }
+.vma-boton--icono {
+    position: relative; width: 40px; height: 40px; padding: 0; font-size: 1.1rem;
+    background: var(--card); color: var(--foreground); border-color: var(--border);
+}
+.vma-boton--icono svg { width: 1.1rem; height: 1.1rem; }
+
+/* --- Banda principal: azul VMA con el patrón de V y A del libro, pestaña naranja y titular con acento ------------ */
+.vma-banda {
+    position: relative; overflow: hidden; border-radius: 1.75rem; color: #fff; padding: 44px 40px;
+    background-color: var(--vma-azul);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='88' height='60' viewBox='0 0 88 60'%3E%3Cg fill='rgba(255,255,255,0.045)'%3E%3Cpath d='M2 4h12l8 26 8-26h12L28 50H16z'/%3E%3Cpath d='M46 50h12l8-26 8 26h12L72 4H60z'/%3E%3C/g%3E%3C/svg%3E");
+}
+.vma-banda-pestana {
+    position: absolute; top: 0; right: 40px; width: 44px; height: 30px;
+    background: var(--vma-naranja); border-radius: 0 0 0.7rem 0.7rem;
+}
+.vma-banda h1, .vma-banda h2 {
+    margin: 0 0 12px; font-size: clamp(1.7rem, 3.4vw, 2.6rem); line-height: 1.12; font-weight: 700; letter-spacing: -0.01em;
+}
+.vma-banda em { font-style: normal; color: var(--vma-acento); }   /* la palabra resaltada del titular */
+.vma-banda p { margin: 0; max-width: 46ch; color: rgba(255, 255, 255, 0.82); line-height: 1.6; }
+
+/* --- Contenedor de ícono del libro: cuadrado con el borde inferior curvo, como los óvalos del logo ---------------
+   El ícono va en blanco, de trazo (lucide u otro), y no debe pasar del 50 % del tamaño del logo en la misma pieza. */
+.vma-contenedor-icono {
+    width: 64px; height: 64px; display: grid; place-items: center; flex-shrink: 0;
+    color: #fff; font-size: 30px; background: var(--vma-azul);
+    clip-path: polygon(0 0, 100% 0, 100% 84%, 90% 88%, 80% 91.5%, 70% 94.2%, 60% 96.3%, 50% 97.9%, 40% 99%, 30% 99.7%, 20% 100%, 0 100%);
+}
+.vma-contenedor-icono svg { width: 1em; height: 1em; }
+.vma-contenedor-icono--chico { width: 56px; height: 56px; font-size: 26px; }
+.vma-contenedor-icono--mini { width: 36px; height: 36px; font-size: 18px; }
+.vma-contenedor-icono--azul { background: var(--vma-azul); }
+.dark .vma-contenedor-icono--azul, [data-theme="dark"] .vma-contenedor-icono--azul, .vma-banda .vma-contenedor-icono--azul { background: var(--vma-azul-claro); }
+.vma-contenedor-icono--seguridad { background: var(--vma-azul); }
+.dark .vma-contenedor-icono--seguridad, [data-theme="dark"] .vma-contenedor-icono--seguridad, .vma-banda .vma-contenedor-icono--seguridad { background: var(--vma-azul-claro); }
+.vma-contenedor-icono--limpieza { background: var(--vma-verde); }
+.vma-contenedor-icono--mensajeria { background: var(--vma-naranja); }
+.vma-contenedor-icono--neutro { background: var(--muted); color: var(--muted-foreground); }
+
+/* --- Títulos de sección: mayúsculas con una línea --------------------------------------------------------------- */
+.vma-titulo-seccion {
+    display: flex; align-items: center; gap: 14px; margin: 44px 0 18px;
+    font-size: 0.78rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted-foreground);
+}
+.vma-titulo-seccion::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+
+/* --- Tarjetas ------------------------------------------------------------------------------------------------------- */
+.vma-rejilla { display: grid; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); gap: 20px; }
+.vma-tarjeta {
+    position: relative; display: flex; flex-direction: column; gap: 16px; padding: 24px; color: inherit;
+    border-radius: var(--vma-radio); background: var(--card); border: 1px solid var(--border);
+    box-shadow: var(--vma-sombra); backdrop-filter: blur(8px); text-decoration: none;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+a.vma-tarjeta:hover { transform: translateY(-2px); box-shadow: var(--vma-sombra-alta); }
+.vma-tarjeta h2, .vma-tarjeta h3 { margin: 0; font-size: 1.25rem; font-weight: 700; }
+.vma-tarjeta p { margin: 0; color: var(--muted-foreground); font-size: 0.92rem; line-height: 1.6; }
+.vma-tarjeta-cabeza { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.vma-tarjeta-pie {
+    margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding-top: 16px; border-top: 1px solid var(--border); font-size: 0.78rem; color: var(--muted-foreground);
+}
+.vma-tarjeta--proxima {
+    background: transparent; border-style: dashed; box-shadow: none; backdrop-filter: none;
+    align-items: center; justify-content: center; text-align: center; min-height: 260px; color: var(--muted-foreground);
+}
+.vma-tarjeta--proxima h2, .vma-tarjeta--proxima h3 { color: var(--foreground); font-size: 1.05rem; }
+
+/* --- Chips (etiquetas neutras; el ícono puede llevar el color de la unidad con --marca-*) ------------------------ */
+.vma-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.vma-chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+    font-size: 0.78rem; font-weight: 500; border: 1px solid var(--border); background: var(--muted); color: var(--foreground);
+}
+.vma-chip svg { width: 1.1em; height: 1.1em; }
+.vma-chip--seguridad svg { color: var(--marca-seguridad); }
+.vma-chip--limpieza svg { color: var(--marca-limpieza); }
+.vma-chip--mensajeria svg { color: var(--marca-mensajeria); }
+
+/* --- Estados (significado, no marca) ------------------------------------------------------------------------------ */
+.vma-estado {
+    --color: var(--vma-estado-info);
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; white-space: nowrap;
+    font-size: 0.75rem; font-weight: 600; color: var(--color); background: color-mix(in srgb, var(--color) 12%, transparent);
+}
+.vma-estado::before { content: ""; width: 7px; height: 7px; border-radius: 999px; background: currentColor; }
+.vma-estado--ok { --color: var(--vma-estado-ok); }
+.vma-estado--aviso { --color: var(--vma-estado-aviso); }
+.vma-estado--error { --color: var(--vma-estado-error); }
+.vma-estado--info { --color: var(--vma-estado-info); }
+
+/* --- Avisos y pie -------------------------------------------------------------------------------------------------- */
+.vma-ayuda {
+    display: flex; align-items: center; gap: 16px; padding: 18px 22px; border-radius: var(--vma-radio);
+    background: var(--muted); font-size: 0.9rem;
+}
+.vma-ayuda > svg { width: 1.4rem; height: 1.4rem; flex-shrink: 0; color: var(--primary); }
+.vma-ayuda strong { font-weight: 600; }
+.vma-pie {
+    margin: 48px 0 32px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;
+    font-size: 0.8rem; color: var(--muted-foreground);
+}
+
+/* Aviso de resultado: error, éxito o información (role="alert" o role="status" en el HTML). */
+.vma-aviso {
+    --color: var(--vma-estado-info);
+    display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; border-radius: var(--vma-radio-chico);
+    font-size: 0.9rem; line-height: 1.5; color: var(--foreground);
+    background: color-mix(in srgb, var(--color) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--color) 35%, transparent);
+}
+.vma-aviso > svg { width: 1.15rem; height: 1.15rem; flex-shrink: 0; margin-top: 2px; color: var(--color); }
+.vma-aviso--error { --color: var(--vma-estado-error); }
+.vma-aviso--ok { --color: var(--vma-estado-ok); }
+.vma-aviso--aviso { --color: var(--vma-estado-aviso); }
+
+/* --- Formularios ----------------------------------------------------------------------------------------------------- */
+.vma-formulario { display: grid; gap: 16px; }
+.vma-campo { display: grid; gap: 6px; }
+.vma-campo label { font-size: 0.875rem; font-weight: 600; }
+.vma-campo small { font-size: 0.78rem; color: var(--muted-foreground); line-height: 1.5; }
+.vma-campo input, .vma-campo select {
+    width: 100%; min-height: 40px; padding: 9px 12px; border: 1px solid var(--input); border-radius: 0.625rem;
+    font: inherit; font-size: 0.9rem; color: var(--foreground); background: var(--popover);
+}
+.vma-campo input:focus-visible, .vma-campo select:focus-visible {
+    outline: none; border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 25%, transparent);
+}
+
+/* --- Tabla -------------------------------------------------------------------------------------------------------- */
+.vma-tabla-envoltura { overflow-x: auto; }
+.vma-tabla { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+.vma-tabla th {
+    text-align: left; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted-foreground); padding: 10px 12px; border-bottom: 1px solid var(--border);
+}
+.vma-tabla td { padding: 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.vma-tabla tr:last-child td { border-bottom: none; }
+.vma-boton--chico { padding: 6px 10px; font-size: 0.8rem; }
+
+@media (max-width: 760px) {
+    .vma-banda { padding: 32px 22px; }
+    .vma-banda-pestana { right: 22px; }
+    .vma-logo-texto, .vma-usuario-nombre { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+    a.vma-tarjeta, .vma-boton { transition: none; }
+    a.vma-tarjeta:hover { transform: none; }
+}
