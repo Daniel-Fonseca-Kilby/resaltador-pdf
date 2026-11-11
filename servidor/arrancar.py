@@ -21,6 +21,18 @@ os.environ.setdefault("TESSERACT_EXE", str(_TESSERACT / "tesseract.exe"))
 os.environ.setdefault("TESSDATA_PREFIX", str(_TESSERACT / "tessdata"))
 
 
+def _hilos_por_defecto() -> int:
+    """Hilos de waitress: lo que diga PLANILLAS_HILOS en el .env (iniciar.ps1 lo carga al entorno), si no 8. Más hilos
+    mantienen la página, la vista previa y /salud respondiendo aunque un lote pesado esté corriendo -los lotes igual van
+    de a uno por el candado de PyMuPDF, así que esto da RESPUESTA, no más lotes a la vez. En JUPITER (20 hilos) subir a
+    12-16 no molesta; en una PC chica, 8 sobra."""
+    try:
+        hilos = int(os.environ.get("PLANILLAS_HILOS", "") or 8)
+    except ValueError:
+        hilos = 8
+    return max(1, hilos)
+
+
 def configurar_registros(carpeta: Path) -> None:
     """Antes de importar la app: su logging.basicConfig no hace nada si el registro ya está configurado."""
     carpeta.mkdir(parents=True, exist_ok=True)
@@ -36,7 +48,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Arranca Planillas con waitress.")
     parser.add_argument("--puerto", type=int, default=8001)
     parser.add_argument("--registros", type=Path, default=Path("..") / "logs")
-    parser.add_argument("--hilos", type=int, default=4)
+    parser.add_argument("--hilos", type=int, default=_hilos_por_defecto())
     args = parser.parse_args()
     configurar_registros(args.registros)
 

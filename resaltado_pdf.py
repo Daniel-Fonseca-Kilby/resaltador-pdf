@@ -206,7 +206,9 @@ OCR_CONF_MINIMA = 40    # se ignoran las palabras que Tesseract leyó con poca c
 # portal, Licitaciones, los hilos de waitress-), con un piso de 2 y un techo de 8. En JUPITER (Xeon 4210, 20 hilos,
 # 128 GB) quedan 8; en una PC chica, 2-4. Cada Tesseract se fija a 1 hilo (OMP_THREAD_LIMIT) para que el paralelismo sea
 # a nivel de página y no se pisen entre sí. Variable de entorno OCR_MAX_WORKERS para ajustarlo sin tocar código.
-OCR_MAX_WORKERS = max(2, min(int(os.environ.get("OCR_MAX_WORKERS") or (os.cpu_count() or 2) // 2), 8))
+_ocr_workers_env = (os.environ.get("OCR_MAX_WORKERS") or "").strip()
+OCR_MAX_WORKERS = (max(1, int(_ocr_workers_env)) if _ocr_workers_env.isdigit()
+                   else max(2, min((os.cpu_count() or 2) // 2, 8)))   # auto: mitad de los hilos, techo 8; el env manda exacto
 UMBRAL_COBERTURA_IMAGEN = 0.5  # una imagen que cubre al menos la mitad de la página = página escaneada (aunque traiga texto)
 OCR_MINIMO_PALABRAS = 3        # si el OCR lee menos palabras que esto, la página escaneada se cuenta como "no leída" (aviso)
 

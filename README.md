@@ -78,9 +78,16 @@ al terminar de procesar.
 
 ## En un servidor Windows (JUPITER, junto a Licitaciones)
 
-En Windows no corre gunicorn: la app se sirve con **waitress** (`servidor/arrancar.py`, un proceso con 4 hilos;
-los lotes de PDF van de uno en uno por el candado de PyMuPDF) como tarea programada «Planillas VMA», que arranca
-con Windows y se vuelve a levantar si se cae. Mismo esquema que Licitaciones.
+En Windows no corre gunicorn: la app se sirve con **waitress** (`servidor/arrancar.py`, un proceso con varios hilos,
+8 por defecto; los lotes de PDF van de uno en uno por el candado de PyMuPDF) como tarea programada «Planillas VMA»,
+que arranca con Windows y se vuelve a levantar si se cae. Mismo esquema que Licitaciones.
+
+**Para que la web no se «pegue» bajo carga.** Los hilos atienden la página, la vista previa del Excel y `/salud`
+mientras un lote pesado se procesa; como los lotes van de a uno (candado de PyMuPDF), más hilos dan RESPUESTA, no
+lotes en paralelo. Se ajustan con `PLANILLAS_HILOS` en `C:\Planillas\.env` (ej. `PLANILLAS_HILOS=12` en JUPITER, que
+tiene 20 hilos lógicos) sin reinstalar: basta reiniciar la tarea. El OCR de escaneados corre en paralelo pero limitado
+a la mitad de los hilos lógicos (techo 8, variable `OCR_MAX_WORKERS`), para no acaparar el servidor y dejar núcleos al
+portal y a Licitaciones.
 
 1. **En la PC:** `powershell -ExecutionPolicy Bypass -File servidor\empaquetar.ps1` deja
    `paquetes\planillas-<fecha>.zip` (con `VERSION.txt`: commit y fecha).
